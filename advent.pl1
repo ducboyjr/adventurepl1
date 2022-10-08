@@ -1,0 +1,5732 @@
+/*                  ADVENTURES OF AN ERRANT PL/1 PROGRAM
+
+
+   CURRENT LIMITS:
+
+      15000 WORDS OF MESSAGE TEXT (LINES, LINESIZE, LINEMAX).
+
+       2000 TRAVEL OPTIONS (TRAVEL, TRAVMAX).
+
+       1000 VOCABULARY WORDS (VERB_NUMB, VERB_NAME, VERBMAX).
+
+        999 LOCATIONS (LTEXT, STEXT, KEY, COND, ABS, ATLOC, LOC_MAX).
+
+        500 OBJECTS (PLAC, PLACE, FIXD FIXED, LINK (TWICE), PTEXT,
+                     PROP, OBJ_MAX).
+
+        100 *ACTION* VERBS (ACTION_SPK, ACTION_MAX).
+
+        500 RANDOM MESSAGES (RTEXT, RTEXTMAX).
+
+         30 DIFFERENT PLAYER CLASSIFICATIONS
+            (CTEXT, CLSVALUE, CLASSMAX).
+
+         30 HINTS, LESS 7 (HINTLOC, HINT_TAKEN, HINTS, HINTMIN,
+                           HINTMAX).
+
+   THERE ARE ALSO LIMITS WHICH CANNOT BE EXCEEDED DUE TO THE
+   STRUCTURE OF THE DATABASE. (E.E., THE VOCABULARY USES 
+   N/1000 TO DETERMINE WORD TYPE, SO THERE CAN'T BE MORE
+   THAN 999 WORDS.)  THESE UPPER LIMITS ARE:
+
+        999 NON-SYNONYMOUS VOCABULARY WORDS
+        999 LOCATIONS
+        999 RANDOM MESSAGES
+        500 OBJECTS
+         31 HINTS (LESS 7)
+
+*/
+
+ADVENT: PROC (JCLPARM) OPTIONS (MAIN);
+
+/*
+   JCL PARAMETERS
+
+   AUDIT      DEBUGGING INFORMATION DISPLAYED ON SYSPRINT
+   LOG        GAME IS LOGGED ON SYSPRINT
+   BLANK      BLANK LINES ARE DISPLAYED BETWEEN COMMANDS
+   RESUME     A SUSPENDED GAME IS BEING RESUMED
+*/
+
+         DCL  JCLPARM  CHAR(100) VAR;
+         DCL  VERSION   CHAR(4) STATIC INIT('T.6e');
+         DCL  CAVES     FILE STREAM INPUT;
+         DCL  SYSPRINT  FILE STREAM OUTPUT;
+         DCL SUSPENS    FILE RECORD OUTPUT SEQUENTIAL
+                        ENVIRONMENT(VB RECSIZE(4096) TOTAL);
+         DCL RESUME     FILE RECORD INPUT SEQUENTIAL
+                        ENVIRONMENT VB RECSIZE(4096) TOTAL);
+         DCL TREAD      ENTRY (CHAR(133), FIXED BIN(31), CHAR(133),
+                        FIXED BIN(31), FIXED BIN(31))
+                        OPTIONS (ASM INTER);
+         DCL TWRITE     ENTRY(CHAR(133), FIXED BIN(31), FIXED BIN(31))
+                        OPTIONS (ASM INTER);
+         DCL  (
+               ABS,
+               DATE,
+               INDEX,
+               LENGTH,
+               MAX,
+               MIN,
+               MOD,
+               TIME,
+               TRANSLATE,
+               VERIFY,
+               SUBSTR
+              ) BUILTIN;
+
+         DCL 1 DATA_BASE       STATIC,
+             2 TRAVMAX         FIXED BIN(31)  INIT (2000),
+             2 TRAVSIZE        FIXED BIN(31)  INIT (0),
+             2 TRAVEL(2000)    FIXED DEC(15)  INIT((2000)0),
+             2 LOC_MAX         FIXED BIN(31)  INIT(999),
+             2 LTEXT(999)      FIXED BIN(31)  INIT((999)0),
+             2 STEXT(999)      FIXED BIN(31)  INIT((999)0),
+             2 KEY(999)        FIXED BIN(31)  INIT((999)0),
+             2 COND(999)       FIXED BIN(31)  INIT((999)0),
+             2 ATLOC(999)      FIXED BIN(31)  INIT((999)0),
+             2 ABB(999)        FIXED BIN(31)  INIT((999)0),
+             2 RTEXTMAX        FIXED BIN(31)  INIT(500),
+             2 RTEXT(500)      FIXED BIN(31)  INIT((500)0),
+             2 OBJ_MAX         FIXED BIN(31)  INIT(500),
+             2 PTEXT(500)      FIXED BIN(31)  INIT((500)0),
+             2 PROP(500)       FIXED BIN(31)  INIT((500)0),
+             2 LINK(1000)      FIXED BIN(31)  INIT((1000)0),
+             2 PLACE(500)      FIXED BIN(31)  INIT((500)0),
+             2 FIXED(500)      FIXED BIN(31)  INIT((500)0),
+             2 PLAC(500)       FIXED BIN(31)  INIT((500)0),
+             2 FIXD(500)       FIXED BIN(31)  INIT((500)0),
+             2 VERBMAX         FIXED BIN(31)  INIT(1000),
+             2 VERBSIZE        FIXED BIN(31)  INIT(0),
+             2 VERB_NUMB(1000) FIXED BIN(31)  INIT((1000)0),
+             2 VERB_NAME(1000) CHAR(8),
+             2 ACTION_MAX      FIXED BIN(31)  INIT(100),
+             2 ACTION_SPK(100) FIXED BIN(31)  INIT((100)0),
+             2 CLASSMAX        FIXED BIN(31)  INIT(30),
+             2 CLASSIZE        FIXED BIN(31)  INIT(0),
+             2 CTEXT(30)       FIXED BIN(31)  INIT((30)0), 
+             2 CLSVALUE(30)    FIXED BIN(31)  INIT((30)0),
+             2 HINTMIN         FIXED BIN(31)  INIT(8),
+             2 HINTMAX         FIXED BIN(31)  INIT(30),
+             2 HINTSIZE        FIXED BIN(31)  INIT(0),
+             2 HINTLOC(30)     FIXED BIN(31)  INIT((30)0),
+             2 HINTS(30,4)     FIXED BIN(31)  INIT((120)0),
+             /* HINT_TAKEN(30) BIT(1) IS IN BIT_STRINGS STRUCTURE */
+             2 LINEMAX         FIXED BIN(31)  INIT(15000),
+             2 LINESIZE        FIXED BIN(31)  INIT(0),
+             2 LINES(15000)    CHAR(8);
+
+         DCL 1 OBJECT_WORDS    STATIC,
+	     2 ANIMAL          FIXED BIN(31)  INIT(0),
+	     2 ALL             FIXED BIN(31)  INIT(0),
+	     2 AXE             FIXED BIN(31)  INIT(0), 
+	     2 BAR             FIXED BIN(31)  INIT(0),
+	     2 BALL            FIXED BIN(31)  INIT(0),
+	     2 BATTERY         FIXED BIN(31)  INIT(0),
+	     2 BEAR            FIXED BIN(31)  INIT(0),
+	     2 BIRD            FIXED BIN(31)  INIT(0),
+	     2 BOTTLE          FIXED BIN(31)  INIT(0),
+	     2 CAGE            FIXED BIN(31)  INIT(0),
+	     2 CHAIN           FIXED BIN(31)  INIT(0),
+	     2 CHASM           FIXED BIN(31)  INIT(0),
+	     2 CHALICE         FIXED BIN(31)  INIT(0),
+	     2 CHEST           FIXED BIN(31)  INIT(0),
+	     2 CIRCLE          FIXED BIN(31)  INIT(0),
+	     2 CLAM            FIXED BIN(31)  INIT(0),
+	     2 COINS           FIXED BIN(31)  INIT(0),
+	     2 CONCH           FIXED BIN(31)  INIT(0),
+             2 CREVASSE        FIXED BIN(31)  INIT(0), 
+	     2 DOOR            FIXED BIN(31)  INIT(0),
+	     2 DOUBLOONS       FIXED BIN(31)  INIT(0),
+	     2 DRAGON          FIXED BIN(31)  INIT(0),
+	     2 DRAWINGS        FIXED BIN(31)  INIT(0),
+	     2 DWARF           FIXED BIN(31)  INIT(0),
+	     2 DYNAMITE        FIXED BIN(31)  INIT(0),
+	     2 EGGS            FIXED BIN(31)  INIT(0),
+	     2 ELVES           FIXED BIN(31)  INIT(0),
+	     2 EMERALD         FIXED BIN(31)  INIT(0),
+	     2 ERMINE          FIXED BIN(31)  INIT(0),
+	     2 FALLS           FIXED BIN(31)  INIT(0),
+	     2 FISSURE         FIXED BIN(31)  INIT(0),
+	     2 FLOOR           FIXED BIN(31)  INIT(0),
+	     2 FOOD            FIXED BIN(31)  INIT(0),
+	     2 FROG            FIXED BIN(31)  INIT(0),
+	     2 GRATE           FIXED BIN(31)  INIT(0),
+	     2 HERB            FIXED BIN(31)  INIT(0),
+	     2 HEXAGON         FIXED BIN(31)  INIT(0),
+	     2 HOLE            FIXED BIN(31)  INIT(0),
+	     2 KAZAK           FIXED BIN(31)  INIT(0),
+	     2 KEYS            FIXED BIN(31)  INIT(0),
+	     2 KNIFE           FIXED BIN(31)  INIT(0),
+	     2 KRATER          FIXED BIN(31)  INIT(0),
+	     2 LAMP            FIXED BIN(31)  INIT(0),
+	     2 MAGAZINE        FIXED BIN(31)  INIT(0),
+	     2 MESSAGE         FIXED BIN(31)  INIT(0),
+	     2 MIRROR          FIXED BIN(31)  INIT(0),
+	     2 MOLE            FIXED BIN(31)  INIT(0),
+	     2 MONSTER         FIXED BIN(31)  INIT(0),
+	     2 NUGGET          FIXED BIN(31)  INIT(0),
+	     2 NULLX           FIXED BIN(31)  INIT(0),
+	     2 OIL             FIXED BIN(31)  INIT(0),
+	     2 OYSTER          FIXED BIN(31)  INIT(0), 
+	     2 PARCHMENT       FIXED BIN(31)  INIT(0),
+	     2 PEARL           FIXED BIN(31)  INIT(0),
+	     2 PENTAGON        FIXED BIN(31)  INIT(0),
+	     2 PILLOW          FIXED BIN(31)  INIT(0),
+	     2 PLANT           FIXED BIN(31)  INIT(0),
+	     2 PLANT2          FIXED BIN(31)  INIT(0),
+	     2 PYRAMID         FIXED BIN(31)  INIT(0),
+	     2 RING            FIXED BIN(31)  INIT(0),
+	     2 RING1           FIXED BIN(31)  INIT(0),
+	     2 RING2           FIXED BIN(31)  INIT(0),
+	     2 RING3           FIXED BIN(31)  INIT(0),
+	     2 RING4           FIXED BIN(31)  INIT(0),
+	     2 ROD             FIXED BIN(31)  INIT(0),
+	     2 ROD2            FIXED BIN(31)  INIT(0),
+	     2 ROPE            FIXED BIN(31)  INIT(0),
+	     2 RUG             FIXED BIN(31)  INIT(0),
+	     2 SHOVEL          FIXED BIN(31)  INIT(0),
+	     2 SNAKE           FIXED BIN(31)  INIT(0),
+	     2 SPICES          FIXED BIN(31)  INIT(0),
+	     2 SPROUTS         FIXED BIN(31)  INIT(0),
+	     2 SQUARE          FIXED BIN(31)  INIT(0),
+	     2 STAFF           FIXED BIN(31)  INIT(0),
+	     2 STAR            FIXED BIN(31)  INIT(0),
+	     2 STEPS           FIXED BIN(31)  INIT(0),
+	     2 SWORD           FIXED BIN(31)  INIT(0),
+	     2 TABLET          FIXED BIN(31)  INIT(0),
+	     2 TRIDENT         FIXED BIN(31)  INIT(0),
+	     2 TROLL           FIXED BIN(31)  INIT(0),
+	     2 TROLL2          FIXED BIN(31)  INIT(0),
+	     2 VASE            FIXED BIN(31)  INIT(0),
+	     2 VEND            FIXED BIN(31)  INIT(0),
+	     2 WAD             FIXED BIN(31)  INIT(0),
+	     2 WATER           FIXED BIN(31)  INIT(0),
+	     2 WIND            FIXED BIN(31)  INIT(0);
+
+         DCL 1 VERB_WORDS    STATIC,
+             2 ASSEMBLE        FIXED BIN(31)  INIT(0),
+             2 BACK            FIXED BIN(31)  INIT(0),
+             2 BLAST           FIXED BIN(31)  INIT(0),
+             2 BREAK           FIXED BIN(31)  INIT(0),
+             2 BRIEF           FIXED BIN(31)  INIT(0),
+             2 CALM            FIXED BIN(31)  INIT(0),
+             2 CAVE            FIXED BIN(31)  INIT(0),
+             2 CRAWL           FIXED BIN(31)  INIT(0),
+             2 DEPRESSION      FIXED BIN(31)  INIT(0),
+             2 DIG             FIXED BIN(31)  INIT(0),
+             2 DOWN            FIXED BIN(31)  INIT(0),
+             2 DRINK           FIXED BIN(31)  INIT(0),
+             2 DROP            FIXED BIN(31)  INIT(0),
+             2 EAST            FIXED BIN(31)  INIT(0),
+             2 EAT             FIXED BIN(31)  INIT(0),
+             2 ENTRANCE        FIXED BIN(31)  INIT(0),
+             2 FEED            FIXED BIN(31)  INIT(0),
+             2 FILL            FIXED BIN(31)  INIT(0),
+             2 FIND            FIXED BIN(31)  INIT(0),
+             2 FOO             FIXED BIN(31)  INIT(0),
+             2 FORWARD         FIXED BIN(31)  INIT(0),
+             2 FRIEND          FIXED BIN(31)  INIT(0),
+             2 GREEK           FIXED BIN(31)  INIT(0),
+             2 HOURS           FIXED BIN(31)  INIT(0),
+             2 INSIDE          FIXED BIN(31)  INIT(0),
+             2 INVENTORY       FIXED BIN(31)  INIT(0),
+             2 KILL            FIXED BIN(31)  INIT(0),
+             2 KISS            FIXED BIN(31)  INIT(0),
+             2 LEFT            FIXED BIN(31)  INIT(0),
+             2 LOCK            FIXED BIN(31)  INIT(0),
+             2 LOGON           FIXED BIN(31)  INIT(0),
+             2 LOOK            FIXED BIN(31)  INIT(0),
+             2 MAGIC           FIXED BIN(31)  INIT(0),
+             2 MURDOC          FIXED BIN(31)  INIT(0),
+             2 NOTHING         FIXED BIN(31)  INIT(0),
+             2 NORTH           FIXED BIN(31)  INIT(0),
+             2 NORTHEAST       FIXED BIN(31)  INIT(0),
+             2 NORTHWEST       FIXED BIN(31)  INIT(0),
+             2 NULLX           FIXED BIN(31)  INIT(0),
+             2 ON              FIXED BIN(31)  INIT(0),
+             2 OFF             FIXED BIN(31)  INIT(0),
+             2 OPEN            FIXED BIN(31)  INIT(0),
+             2 OUTSIDE         FIXED BIN(31)  INIT(0),
+             2 POUR            FIXED BIN(31)  INIT(0),
+             2 PRUGH           FIXED BIN(31)  INIT(0),
+             2 QUIT            FIXED BIN(31)  INIT(0),
+             2 READ            FIXED BIN(31)  INIT(0),
+             2 RIGHT           FIXED BIN(31)  INIT(0),
+             2 RUB             FIXED BIN(31)  INIT(0),
+             2 SAY             FIXED BIN(31)  INIT(0),
+             2 SCORE           FIXED BIN(31)  INIT(0),
+             2 SHORTCUT        FIXED BIN(31)  INIT(0),
+             2 SNAPSHOT        FIXED BIN(31)  INIT(0),
+             2 SPELL           FIXED BIN(31)  INIT(0),
+             2 SOUTH           FIXED BIN(31)  INIT(0),
+             2 SOUTHEAST       FIXED BIN(31)  INIT(0),
+             2 SOUTHWEST       FIXED BIN(31)  INIT(0),
+             2 SUSPEND         FIXED BIN(31)  INIT(0),
+             2 TAKE            FIXED BIN(31)  INIT(0),
+             2 TERMINATE       FIXED BIN(31)  INIT(0),
+             2 THROW           FIXED BIN(31)  INIT(0),
+             2 UP              FIXED BIN(31)  INIT(0),
+             2 WAKE            FIXED BIN(31)  INIT(0),
+             2 WALK            FIXED BIN(31)  INIT(0),
+             2 WAVE            FIXED BIN(31)  INIT(0),
+             2 WEST            FIXED BIN(31)  INIT(0),
+             2 WINDY           FIXED BIN(31)  INIT(0);
+
+         DCL 1 NAME_WORDS      STATIC,
+             2 AKIBA           FIXED BIN(31)  INIT(0),
+             2 ALPHA           FIXED BIN(31)  INIT(0),
+             2 BELEG           FIXED BIN(31)  INIT(0),
+             2 FEE             FIXED BIN(31)  INIT(0),
+             2 GLORN           FIXED BIN(31)  INIT(0),
+             2 MAGIC_WORDS(20) FIXED BIN(31)  INIT((20)0),
+             2 NAKRL           FIXED BIN(31)  INIT(0);
+
+         DCL 1 MISC_WORDS      STATIC,
+             2 ABBNUM          FIXED BIN(31)  INIT(0),
+             2 BONUS           FIXED BIN(31)  INIT(0),
+             2 CLOCK1          FIXED BIN(31)  INIT(0),
+             2 CLOCK2          FIXED BIN(31)  INIT(0),
+             2 CUR_SCORE       FIXED BIN(31)  INIT(0),
+             2 DETAIL          FIXED BIN(31)  INIT(0),
+             2 FALLS_FLOOD     FIXED BIN(31)  INIT(0),
+             2 FALLS_LAST      FIXED BIN(31)  INIT(0),
+             2 FALLS_STOP      FIXED BIN(31)  INIT(0),
+             2 FOOBAR          FIXED BIN(31)  INIT(0),
+             2 GREEK_CANT      FIXED BIN(31)  INIT(0),
+             2 HOLDING         FIXED BIN(31)  INIT(0),
+             2 HOLDMAX         FIXED BIN(31)  INIT(0),
+             2 HOLDPREV        FIXED BIN(31)  INIT(0),
+             2 I               FIXED BIN(31)  INIT(0),
+             2 J               FIXED BIN(31)  INIT(0),
+             2 K               FIXED BIN(31)  INIT(0),
+             2 KK              FIXED BIN(31)  INIT(0),
+             2 L               FIXED BIN(31)  INIT(0),
+             2 LAMP-LIFE       FIXED BIN(31)  INIT(0),
+             2 LLL             FIXED BIN(31)  INIT(0),
+             2 LOC             FIXED BIN(31)  INIT(0),
+             2 MAX_SCORE       FIXED BIN(31)  INIT(0),
+             2 MAXDIE          FIXED BIN(31)  INIT(0),
+             2 MAXTRS          FIXED BIN(31)  INIT(0),
+             2 MINTRS          FIXED BIN(31)  INIT(0),
+             2 NEWLOC          FIXED BIN(31)  INIT(0),
+             2 NUMDIE          FIXED BIN(31)  INIT(0),
+             2 OBJ             FIXED BIN(31)  INIT(0),
+             2 OLDLOC          FIXED BIN(31)  INIT(0),
+             2 OLDLOC2         FIXED BIN(31)  INIT(0),
+             2 OUTSIDE_LAMP    FIXED BIN(31)  INIT(0),
+             2 SAID_MAGIC      FIXED BIN(31)  INIT(0),
+             2 SAID_WEST       FIXED BIN(31)  INIT(0),
+             2 SPELL_COUNT     FIXED BIN(31)  INIT(0),
+             2 SPELL_TURN      FIXED BIN(31)  INIT(0),
+             2 SPELL_VALUE     FIXED BIN(31)  INIT(0),
+             2 SPK             FIXED BIN(31)  INIT(0),
+             2 SPK_OK          FIXED BIN(31)  INIT(54),
+             2 SUSPEND_COUNT   FIXED BIN(31)  INIT(0),
+             2 TREASURE_LEFT   FIXED BIN(31)  INIT(0),
+             2 TREASURE_LOST   FIXED BIN(31)  INIT(0),
+             2 TURNS           FIXED BIN(31)  INIT(0),
+             2 VERB            FIXED BIN(31)  INIT(0),
+             2 WIND_CANT       FIXED BIN(31)  INIT(0);
+
+         DCL 1 DWARF_STUFF     STATIC,
+             2 ATTACK          FIXED BIN(31)  INIT(0),
+             2 CHEST_LOC       FIXED BIN(31)  INIT(0),
+             2 CHEST_LOC2      FIXED BIN(31)  INIT(0),
+             2 DALTLOC         FIXED BIN(31)  INIT(0),
+             2 DFLAG           FIXED BIN(31)  INIT(0),
+             2 DKILL           FIXED BIN(31)  INIT(0),
+             2 DTOTAL          FIXED BIN(31)  INIT(0),
+             2 KNIFE_LOC       FIXED BIN(31)  INIT(0),
+             2 MOLE_COUNT      FIXED BIN(31)  INIT(0),
+             2 STICK           FIXED BIN(31)  INIT(0),
+             2 DWARF_MAX       FIXED BIN(31)  INIT(20),
+             2 DLOC(20)        FIXED BIN(31)  INIT((20)0),
+             2 ODLOC(20)       FIXED BIN(31)  INIT((20)0),
+             2 DSEEN(20)       BIT(1)         INIT((20)'0'B),
+             2 DWARF_NUM       FIXED BIN(31)  INIT(5),
+             2 PIRATE_NUM      FIXED BIN(31)  INIT(6),
+             2 NOSTRIL_NUM     FIXED BIN(31)  INIT(7),
+             2 DRAGON_NUM      FIXED BIN(31)  INIT(8),
+             2 TRUCK_NUM       FIXED BIN(31)  INIT(9),
+             2 MURDOC_NUM      FIXED BIN(31)  INIT(10),
+             2 NECRO_NUM       FIXED BIN(31)  INIT(11),
+             2 DWARF_12        FIXED BIN(31)  INIT(12),
+             2 DWARF_13        FIXED BIN(31)  INIT(13),
+             2 DWARF_14        FIXED BIN(31)  INIT(14),
+             2 DWARF_15        FIXED BIN(31)  INIT(15),
+             2 DWARF_16        FIXED BIN(31)  INIT(16),
+             2 DWARF_17        FIXED BIN(31)  INIT(17),
+             2 DWARF_18        FIXED BIN(31)  INIT(18),
+             2 DWARF_19        FIXED BIN(31)  INIT(19),
+             2 DWARF_20        FIXED BIN(31)  INIT(20);
+
+         DCL 1 CHAR_STRINGS    STATIC,
+             2 CMD_BUFFER      CHAR(133)      INIT(' '),
+             2 INSTR           CHAR(133)      INIT(' '),
+             2 OUTSTR          CHAR(133) VAR  INIT(' '),
+             2 TKWORD          CHAR(16)  VAR  INIT(' '),
+             2 WORD(4)         CHAR(8)        INIT((4)' '),
+             2 WORDX(4)        CHAR(8)        INIT((4)' ');
+
+         DCL 1 BIT_STRINGS     STATIC,
+             2 ALL_FLAG        BIT(1)  INIT('0'B),
+             2 AUDIT_GAME      BIT(1)  INIT('0'B),
+             2 BLANK_LINE      BIT(1)  INIT('0'B),
+             2 BUFFERED_CMDS   BIT(1)  INIT('0'B),
+             2 CAVE_CLOSED     BIT(1)  INIT('0'B),
+             2 CAVE_CLOSING    BIT(1)  INIT('0'B),
+             2 FALSE           BIT(1)  INIT('0'B),
+             2 GAME_OVER       BIT(1)  INIT('0'B),
+             2 GAVE_UP         BIT(1)  INIT('0'B),
+             2 HAS_PANICKED    BIT(1)  INIT('0'B),
+             2 HINT_TAKEN(30)  BIT(1)  INIT('0'B),
+             2 IS_DEAD         BIT(1)  INIT('0'B),
+             2 IS_HURT         BIT(1)  INIT('0'B),
+             2 KILL_DRAGON     BIT(1)  INIT('0'B),
+             2 KILL_NOSTRIL    BIT(1)  INIT('0'B),
+             2 LAMP_WARNING    BIT(1)  INIT('0'B),
+             2 LOG_GAME        BIT(1)  INIT('0'B),
+             2 MURDOC_ED       BIT(1)  INIT('0'B),
+             2 PAST_CLOSING    BIT(1)  INIT('0'B),
+             2 RECURSIVE       BIT(1)  INIT('0'B),
+             2 RESUME_GAME     BIT(1)  INIT('0'B),
+             2 RUBBED_RING     BIT(1)  INIT('0'B),
+             2 SIZE_WARNING    BIT(1)  INIT('0'B),
+             2 STAFF_SNICKER   BIT(1)  INIT('0'B),
+             2 SUSPEND_MISSING BIT(1)  INIT('0'B),
+             2 TRUCK_SEEN      BIT(1)  INIT('0'B),
+             2 TRUE            BIT(1)  INIT('1'B),
+             2 WAS_DARK        BIT(1)  INIT('0'B),
+             2 YEA             BIT(1)  INIT('0'B);
+
+         DCL 1 SUBROUTINE_STUFF STATIC,
+             2 BITTEMP         FIXED BIN(31)  INIT(0),
+             2 CCODE           FIXED BIN(31)  INIT(0),
+             2 CHOICE          FIXED BIN(31)  INIT(0),
+             2 CMD_LEN         FIXED BIN(31)  INIT(0),
+             2 FROM            FIXED BIN(31)  INIT(0),
+             2 IHURT           FIXED BIN(31)  INIT(0),
+             2 IJUG            FIXED BIN(31)  INIT(0),
+             2 ILOOK           FIXED BIN(31)  INIT(0),
+             2 INLEN           FIXED BIN(31)  INIT(0),
+             2 ISPEAK          FIXED BIN(31)  INIT(0),
+             2 JJUB            FIXED BIN(31)  INIT(0),
+             2 KSPEAK          FIXED BIN(31)  INIT(0),
+             2 LSPEAK          FIXED BIN(31)  INIT(0),
+             2 LIQ2TEMP        FIXED BIN(31)  INIT(0),
+             2 LIQTEMP1        FIXED BIN(31)  INIT(0),
+             2 LIQTEMP2        FIXED BIN(31)  INIT(0),
+             2 NEW_DLOC        FIXED BIN(31)  INIT(0),
+             2 PATH            FIXED BIN(31)  INIT(0),
+             2 PSNUM           FIXED BIN(31)  INIT(0),
+             2 PTNUM           FIXED BIN(31)  INIT(0),
+             2 RANRTN          FIXED BIN(31)  INIT(0),
+             2 SECT            FIXED BIN(31)  INIT(0),
+             2 TEMP            FIXED BIN(31)  INIT(0),
+             2 TK(20)          FIXED DEC(15)  INIT((20)0),
+             2 WORDEND         FIXED BIN(31)  INIT(0),
+             2 WORDSIZE        FIXED BIN(31)  INIT(0),
+             2 WORDSTRT        FIXED BIN(31)  INIT(0),
+             2 VAL             FLOAT DEC(6)   INIT(0),
+             2 VOCRTN          FIXED BIN(31)  INIT(0),
+             2 X               FIXED BIN(31)  INIT(0),
+             2 Y               FLOAT DEC(6)   INIT(0),
+             2 PICWORD         PICTURE 'S99999' INIT(0),
+             2 XLATEFR         CHAR(26)
+                               INIT('ABCDEFGHIJKLMNOPQRSTUVWXYZ'),
+             2 XLATETO         CHAR(26)
+                               INIT('abcdefghijklmnopqrstuvwxyz');
+
+         DCL 1 VERIFICATION_RECORD STATIC,
+             2 VER_VERSION     CHAR(4)        INIT(' '),
+             2 VER_TRAVMAX     FIXED BIN(31)  INIT(0),
+             2 VER_TRAVSIZE    FIXED BIN(31)  INIT(0),
+             2 VER_LOC_MAX     FIXED BIN(31)  INIT(0),
+             2 VER_RTEXTMAX    FIXED BIN(31)  INIT(0),
+             2 VER_OBJ_MAX     FIXED BIN(31)  INIT(0),
+             2 VER_VERBMAX     FIXED BIN(31)  INIT(0),
+             2 VER_VERBSIZE    FIXED BIN(31)  INIT(0),
+             2 VER_ACTION_MAX  FIXED BIN(31)  INIT(0),
+             2 VER_CLASSMAX    FIXED BIN(31)  INIT(0),
+             2 VER_CLASSIZE    FIXED BIN(31)  INIT(0),
+             2 VER_HINTMIN     FIXED BIN(31)  INIT(0),
+             2 VER_HINTMAX     FIXED BIN(31)  INIT(0),
+             2 VER_HINTSIZE    FIXED BIN(31)  INIT(0),
+             2 VER_LINEMAX     FIXED BIN(31)  INIT(0),
+             2 VER_LINESIZE    FIXED BIN(31)  INIT(0);
+ 
+/*
+    LOCATIONS IN THE CAVE
+
+    THESE WORDS REPRESENT THE VARIOUS LOCATONS IN THE GAME THAT
+    ARE HARD CODED IN THE PROGRAM.  bY MAKING THEM "VARIABLES",
+    THE PROGRAM IS SOMEWHAT LESS DEPENDENT ON THE ACTUAL LOCATION
+    NUMBERS SPECIFIED IN THE DATA BASE. THESE VARIABLES MUST NOT
+    BE CHANGED BY THE PROGRAM DURING EXECUTION AND ANY CHANGE IN
+    THE DATA BASE THAT CHANGES ANY OF THESE LOCATIONS MUST ALSO BE
+    MADE HERE.
+*/
+
+         DCL 1 CAVE_LOCATIONS               STATIC,
+             2 ALL_ALIKE_MAZE_3             FIXED BIN(31)  INIT(044),
+             2 ALL_DIFFERENT_MAZE_10        FIXED BIN(31)  INIT(138),
+             2 BELOW_GRATE                  FIXED BIN(31)  INIT(009),
+             2 BRINK_OF_PIT                 FIXED BIN(31)  INIT(057),
+             2 CAVERN_WITH_WATERFALL        FIXED BIN(31)  INIT(095),
+             2 CENTER_OF_EARTH              FIXED BIN(31)  INIT(266),
+             2 CENTER_WIDE_ROOM             FIXED BIN(31)  INIT(154),
+             2 CHAMBER_OF_BOULDERS          FIXED BIN(31)  INIT(127),
+             2 CLASS_ROOM                   FIXED BIN(31)  INIT(233),
+             2 CLEAN_HARD_FLOOR             FIXED BIN(31)  INIT(185),
+             2 COBBLE_CRAWL                 FIXED BIN(31)  INIT(010),
+             2 COMPLEX_JUNCTION             FIXED BIN(31)  INIT(064),
+             2 CROSSOVER_N_S_E_W            FIXED BIN(31)  INIT(062),
+             2 DAMP_ROOM                    FIXED BIN(31)  INIT(209),
+             2 DEAD_END_2                   FIXED BIN(31)  INIT(054),
+             2 DEAD_END_10                  FIXED BIN(31)  INIT(114),
+             2 DEAD_END_11                  FIXED BIN(31)  INIT(140),
+             2 DEBRIS_ROOM                  FIXED BIN(31)  INIT(166),
+             2 EAST_PIT                     FIXED BIN(31)  INIT(024),
+             2 EAST_SIDE_POOL               FIXED BIN(31)  INIT(218),
+             2 ELVES_PRISON                 FIXED BIN(31)  INIT(161),
+             2 EMPTY_ROOM                   FIXED BIN(31)  INIT(162),
+             2 END_OF_ROAD                  FIXED BIN(31)  INIT(001),
+             2 GARDEN_ROOM                  FIXED BIN(31)  INIT(151),
+             2 GENEOLOGY_ROOM               FIXED BIN(31)  INIT(208),
+             2 GEOMETRY_ROOM                FIXED BIN(31)  INIT(268),
+             2 GREEK_ROOM                   FIXED BIN(31)  INIT(267),
+             2 HALL_OF_MISTS                FIXED BIN(31)  INIT(015),
+             2 HALL_MT_KING                 FIXED BIN(31)  INIT(019),
+             2 IN_BUILDING                  FIXED BIN(31)  INIT(003),
+             2 IN_FOREST                    FIXED BIN(31)  INIT(005),
+             2 IN_VALLEY                    FIXED BIN(31)  INIT(004),
+             2 KAZAKS_CHAMBER               FIXED BIN(31)  INIT(219),
+             2 LOW_ROOM                     FIXED BIN(31)  INIT(018),
+             2 MIDDLE_NS_HALLWAY            FIXED BIN(31)  INIT(206),
+             2 MIROR_CANYON                 FIXED BIN(31)  INIT(109),
+             2 MIRROR_ROOM                  FIXED BIN(31)  INIT(147),
+             2 MOLE_ROOM                    FIXED BIN(31)  INIT(153),
+             2 MOLES_HOME                   FIXED BIN(31)  INIT(230),
+             2 NARROW_CURVING_EW_PASSAGE    FIXED BIN(31)  INIT(220),
+             2 NE_REPOSITORY                FIXED BIN(31)  INIT(115),
+             2 NECROMANCERS_PRISON          FIXED BIN(31)  INIT(232),
+             2 PALACE_ELVEN_KING            FIXED BIN(31)  INIT(241),
+             2 PLEASURE_SIGN                FIXED BIN(31)  INIT(186),
+             2 PLOVER_ALCOVE                FIXED BIN(31)  INIT(099),
+             2 PLOVER_ROOM                  FIXED BIN(31)  INIT(100),
+             2 SECOND_POOL_ALCOVE           FIXED BIN(31)  INIT(184),
+             2 SEVENTH_POOL                 FIXED BIN(31)  INIT(181),
+             2 SHAPELESS_MAZE_6             FIXED BIN(31)  INIT(192),
+             2 SHAPELESS_MAZE_10            FIXED BIN(31)  INIT(196),
+             2 SLIT_IN_STREAMBED            FIXED BIN(31)  INIT(007),
+             2 SW_REPOSITORY                FIXED BIN(31)  INIT(116),
+             2 TOP_OF_STALACTITE            FIXED BIN(31)  INIT(111),
+             2 TOP_SMALL_PIT                FIXED BIN(31)  INIT(014),
+             2 UNUSED_ROOM                  FIXED BIN(31)  INIT(017),
+             2 WEST_SIDE_FISSURE            FIXED BIN(31)  INIT(027),
+             2 WEST_SIDE_POOL               FIXED BIN(31)  INIT(213),
+             2 WITTS_END                    FIXED BIN(31)  INIT(108),
+             2 WIZARDS_CHAMBER              FIXED BIN(31)  INIT(231),
+             2 Y_2                          FIXED BIN(31)  INIT(033);
+
+/*
+
+   DESCRIPTION OF SOME OF THE MISCELLANEOUS VARIABLES
+
+   ABBNUM          HOW OFTEN WE SHOULD PRINT NON-ABBREVIATED
+                   DESCRIPTIONS
+   BONUS           USED TO DETERMINE AMOUNT OF BONUS IF HE
+                   REACHES CLOSING
+   CLOCK1          NUMBER OF TURNS FROM FINDING LAST TREASURE
+                   TILL CLOSING
+   CLOCK2          NUMBER OF TURNS FROM FIRST WARNING TILL
+                   BLINDING FLASH
+   DETAIL          HOW OFTEN WE'VE SAID "NOT ALLOWED TO GIVE
+                   MORE DETAIL"
+   DKILL           NUMBER OF DWARVES KILLED
+   FALLS_FLOOD     THE STATUS
+   FALLS_LAST        OF THE
+   FALLS_STOP         FALLS
+   FOOBAR          CURRENT PROGRESS IN SAYING "FEE FIE FOE FOO"
+   GREEK_CANT      CURRENT PROGRESS IN THE GREEK INCANTATION
+   HOLDING         NUMBER OF OBJECTS BEING CARRIED
+   HOLDMAX         MAXIMUM NUMBER OF OBJECTS THAT CAN BE CARRIED
+   HOLDPREV        PREVIOUS HOLDMAX FOR WARNING MESSAGE
+   KNIFE_LOC       0 IF NO KNIFE HERE, LOC IF KNIFE HERE, -1
+                   AFTER CAVEAT.
+   LAMP_LIFE       LIFETIME OF LAMP
+   LOC             IS THE CURRENT LOCATION OF THE ADVENTURER
+   MAGIC_WORDS     LIST OF WORDS THAT ARE CONSIDERED MAGIC (FOR "SAY")
+   MAXDIE          NUMBER OF REINCARNATION MESSAGES AVAILABLE (UP TO 5)
+   MAXTRS          NUMBER OF HIGHEST TREASURE
+   MINTRS          NUMBER OF LOWEST TREASURE
+   NEWLOC          IS THE NEW LOCATION OF THE ADVENTURER
+   NUMDIE          NUMBER OF TIMES KILLED SO FAR
+   OLDLOC          IS THE PREVIOUS LOCATION OF THE ADVENTURER
+   OLDLOC2         IS THE LOCATION OF THE ADVENTURER BEFORE OLDLOC
+                   (JUST IN CASE HE DIES)
+   OUTSIDE_LAMP    THE AMOUNT OF OUTSIDE WANDERING WITH THE LAMP ON
+   SAID_MAGIC      THE NUMBER OF TIMES MAGIC HAS BEEN SAID, IT IS
+                   NO LONGER MAGIC AFTER 20 TIMES.
+   SAID_WEST       HOW MANY TIMES HE'S SAID "WEST" INSTEAD OF "W"
+   SUSPEND_COUNT   IS THE NUMBER OF TIMES THE GAME HAS BEEN SUSPENDED
+   TREASURE_LEFT   IS HOW MANY TREASURES HAVE NOT BEEN LOCATED
+   TREASURE_LOST   IS HOW MANY TREASURES WILL NEVER BE LOCATED
+                   (BECAUSE OF CERTAIN EVENTS)
+   TURNS           TALLIES HOW MANY COMMANDS HE'S GIVEN
+                   (IGNORES YES/NO)
+   WIND_CANT       CURRENT PROGRESS ON THE WIND INCANTATION
+   ALL_FLAG        INDICATES CURRENT OBJECT IS "ALL"
+   AUDIT_GAME      INDICATES DISPLAY OF INITIALIZATION AND
+                   DEBUGGING MESSAGES
+   BLANK_LINE      INDICATES A BLANK LINE BETWEEN COMMANDS
+   BUFFERED_CMDS   INDICATES COMMANDS ARE STILL STACKED IN THE
+                   INPUT BUFFER
+   CAVE_CLOSED     SAYS WHETHER WE'RE ALL THE WAY CLOSED
+   CAVE_CLOSING    SAYS WHETHER IT'S CLOSING TIME YET
+   FALSE           IS ALWAYS '0'B FOR SETTING BITS
+   GAME_OVER       INDICATES THE END IS UPON THE ADVENTURER
+   GAVE_UP         SAYS WHETHER HE EXITED VIA "QUIT"
+   HAS_PANICKED    SAYS WHETHER HE'S FOUND OUT HE'S TRAPPED IN THE CAVE
+   IS_DEAD         INDICATES THE ADVENTURER HAS BEEN KILLED
+   IS_HURT         INDICATES THE ADVENTURER HAS BEEN INJURED
+   KILL_DRAGON     INDICATES THE FLYING DRAGON HAS BEEN KILLED
+                   BY THE ADVENTURER
+   KILL_NOSTRIL    INDICATES THE NOSTRIL MONSTER HAS BEEN KILLED
+                   BY THE ADVENTURER
+   LAMP_WARNING    SAYS WHETHER HE'S BEEN WARNED ABOUT THE LAMP GOING DIM
+   LOG_GAME        INDICATES HARDCOPY LOGGING OF THE GAME
+   MURDOC_ED       SAYS THAT HE'S SAID THE MOLE'S NAME
+   PAST_CLOSING    SAYS HE'S IN THE NEW STUFF
+   RECURSIVE       IS SET TO PREVENT ERROR LOOPING
+   RESUME_GAME     MEANS THAT THIS INVOCATION IS FOR A PREVIOUSLY
+                   SUSPENDED GAME
+   RUBBED-RING     SAYS THE RING HAS BEEN RUBBED
+   SIZE_WARNING    INDICATES THE WORD SIZE WARNING HAS BEEN ISSUED
+   STAFF_SNICKER   SAYS THE WIZARDS STAFF IS LAUGHING
+   SUSPEND_MISSING SAYS THE SUSPEND FILE IS UNDEFINED
+   TRUCK_SEEN      SAYS THAT FRIAR TRUCK HAS BEEN SEEN
+   TRUE            IS ALWAYS '1'B FOR SETTING BITS
+   WAS_DARK        SAY WHETHER THE LOCATION HE'S LEAVING WAS DARK
+   YEA             IS RANDOM YES/NO REPLY
+*/
+
+/*
+    DEFINE THE ERROR SITUATIONS
+*/
+
+        ON ERROR BEGIN;
+           CALL DEBUG;
+           CALL CIAO;
+           STOP;
+           END;
+
+        ON UNDEFINEDFILE(SUSPENS) BEGIN;
+           SUSPEND_MISSING = TRUE;
+           END;
+
+        ON UNDEFINEDFILE(RESUME) BEGIN;
+           SUSPEND_MISSING = TRUE;
+           END;
+
+/*
+    GO INITIALIZE THE DATA BASE
+*/
+         CALL INIT_DATA;
+
+/*
+   CAN'T LEAVE THE CAVE ONCE IT'S CLOSING (EXCEPT BY MAIN OFFICE).
+   THIS STARTS THE LOOP FOR ALL MOTION.
+*/
+MAKE_A_MOVE:
+        IF IS_HURT THEN CALL BEEN_HURT;
+        IF IS_DEAD THEN CALL DEAD_DUCK;
+        IF GAME_OVER THEN GO TO GAME_END;
+
+        CALL EXAMINE_MOVE;
+        LOC = NEWLOC;
+
+        IF BITSET(LOC,4) & !DARK & PERCENT(20)
+           THEN CALL RSPEAK(241);
+
+/*
+   GO MOVE THE DWARVES, PIRATE, MONSTER, DRAGON, FRIAR,
+   MOLE, AND NECROMANCER.
+*/
+        CALL RANDOM_TRAVELERS;
+        IF IS_HURT THEN CALL BEEN_HURT;
+        IF GAME_OVER THEN GO TO GAME_END;
+        IF LOC != NEWLOC | IS_DEAD THEN GO TO MAKE_A_MOVE;
+
+        CALL DESCRIBE_CURRENT_LOCATION;
+        IF IS_HURT THEN CALL BEEN_HURT;
+        IF GAME_OVER THEN GO TO GAME_END;
+        IF LOC != NEWLOC | IS_DEAD THEN GO TO MAKE_A_MOVE;
+
+/*
+   THIS STARTS THE LOOP WHEN THERE IS NO MOTION INVOLVED.
+   NEW_INPUT IS USED FOR A NEW COMMAND.
+   RETRY_INPUT IS USED WHEN THE PREVIOUS COMMAND WAS INCOMPLETE
+   AND AN ADDITIONAL WORD IS NEEDED.
+*/
+NEW_INPUT:
+        VERB = 0;
+        OBJ = 0;
+
+/*
+   CHECK IF THIS LOC IS ELIGIBLE FOR ANY HINTS.
+   VERB AND OBJ ARE NOT ZEROED HERE, SINCE AN INCOMPLETE
+   COMMAND COULD HAVE BEEN PREVIOUSLY ENTERED AND WE COME HERE
+   TO GET INPUT FOR THE REST OF THE COMMAND.
+*/
+RETRY_INPUT:
+        CALL HINT_CHECK;
+
+/*
+   KICK THE RANDOM NUMBER GENERATOR JUST TO ADD VARIETY TO 
+   THE CHASE.  ALSO, IF CLOSING TIME, CHECK FOR ANY OBJECTS
+   BEING TOTED WITH PROP < 0 AND SET THE PROP TO -1-PROP.
+   THIS WAY OBJECTS WON'T BE DESCRIBED UNTIL THEY'VE BEEN
+   PICKED UP AND PUT DOWN SEPARATE FROM THEIR RESPECTIVE
+   PILES. DON'T TICK CLOCK1 UNLESS WELL INTO CAVE (AND NOT
+   AT Y2).
+*/
+         IF CAVE_CLOSED THEN DO;
+            IF PROP(OYSTER) < 0 & TOTING(OYSTER)
+               THEN CALL PSPEAK(OYSTER,1);
+            DO I = 1 TO OBJ_MAX;
+               IF TOTING(I) & PROP(I) < 0 THEN PROP(I) = -1-PROP(I);
+            END;
+         END;
+         WAS_DARK = DARK;
+         IF KNIFE_LOC > 0 & KNIFE_LOC != LOC THEN KNIFE_LOC = 0;
+         I = RAN(1);
+
+/*
+   GET A COMMAND FROM THE ADVENTURER
+*/
+         CALL GET_INPUT;
+         TURNS = TURNS + 1;
+         CALL SPECIAL_CHECKS;
+
+/*
+   CHECK FOR A PREVIOUS COMMAND OF "SAY" WITHOUT A
+   WORD TO SAY. IF SO, AND ONLY ONE WORD ENTERED,
+   THEN SCARF THE WORD ARBITRARILY.
+*/
+         IF VERB = SAY & WORD(2) != ' ' THEN VERB = 0;
+         IF VERB = SAY THEN DO;
+            OBJ = -1;
+            GO TO EXECUTE_VERB;
+         END;
+
+/*
+   CHECK FOR BEING NEAR THE END OF THE GAME AND ADJUST
+   CLOCK1 AND CLOCK2 SO AS TO KNOW WHEN TO CLOSE THE CAVE.
+*/
+         IF TREASURE_LEFT = 0 & LOC >= HALL_OF_MISTS & LOC != Y_2
+            THEN CLOCK1 = CLOCK1 - 1;
+         IF CLOCK1 = 0 THEN CALL CAVE_IS_CLOSING;
+         IF CLOCK1 < 0 THEN CLOCK2 = CLOCK2 - 1;
+         IF CLOCK2 = 0 THEN DO;
+            CALL CAVE_IS_CLOSED;
+            GO TO MAKE_A_MOVE;
+         END;
+         CALL CHECK_LAMP;
+         CALL RSPEAK(SPK);
+         IF GAVE_UP THEN GO TO GAME_END;
+
+/*
+   DECODE THE WORDS ENTERED BY THE ADVENTURER BY CALLING A SUBROUTINE
+   AND ACT ACCORDING TO THE RETURN FROM THE SUBROUTINE.
+*/
+DECODE_WORD:
+         J = ANALYZE_WORDS;
+         SELECT (J):
+            WHEN (0)   GO TO STAY_AND_SAY_SPK;
+            WHEN (1)   GO TO MOTION_VERB;
+            WHEN (2)   GO TO NEW_INPUT;
+            WHEN (3)   GO TO EXECUTE_VERB;
+            WHEN (4)   GO TO RETRY_INPUT;
+            OTHERWISE  CALL BUG(24);
+         END;
+
+/*
+   THE ADVENTURER HAS ENTERED A MOTION VERB.
+   CALL THE MOTION SUBROUTINE TO FIGURE IT OUT.
+*/
+MOTION_VERB:
+        CALL NEW_PLACE;
+        GO TO MAKE_A_MOVE;
+
+/*
+   THE ADVENTURER HAS ENTERED AN ACTION VERB.
+   INVOKE THE ACTION SUBROUTINE TO FIGURE IT OUT.
+*/
+EXECUTE_VERB:
+        I = ACTION_VERBS(OBJ != 0);
+        IF IS_HURT THEN GO TO MAKE_A_MOVE;
+        SELECT(I):
+           WHEN (0) GO TO STAY_AND_SAY_SPK;
+           WHEN (1) GO TO MAKE_A_MOVE;
+           WHEN (2) GO TO NEW_INPUT;
+           WHEN (3) GO TO RETRY_INPUT;
+           WHEN (4) GO TO DECODE_WORD;
+           OTHERWISE CALL BUG(31);
+        END;
+/*
+   THE ADVENTURER SHOULD RECEIVE ARBITRARY MESSAGE SPK
+   AND STAY WHERE HE IS.
+*/
+STAY_AND_SAY_SPK:
+        CALL RSPEAK(SPK);
+        GO TO NEW_INPUT;
+
+/*
+   EXIT CODE.
+   HERE IS WHERE WE DETERMINE THE RESULTS OF THIS ADVENTURE
+   AND INFORM HIM WHAT HIS WANDERINGS HAVE PRODUCED. WHEN
+   ALL IS SAID AND DONE, WE RETURN TO THE LAND OF REALITY.
+   WE ALSO MAKE SURE THAT IF THE GAME HAS BEEN PREVIOUSLY
+   RESUMED, WE NULLIFY THE SAVED GAME FILE TO PREVENT
+   RESTARTING OVER AT THE EARLIER POINT.
+*/
+GAME_END:
+        CALL SCORING(FALSE);
+        CALL LINESKP;
+        CALL LINESKP;
+        CALL LINESKP;
+
+        TKWORD = 's.';
+        IF TURNS = 1 THEN TKWORD = '.';
+        PUT STRING (OUTSTR) EDIT
+            ('You scored',CUR_SCORE,' out of a possible',
+            MAX_SCORE,' points, using',TURNS,'move',TKWORD)
+            (A,F(4),A,F(4),A,F(5),2 A);
+        CALL LINEOUT;
+
+        DO I = 1 TO CLASSIZE;
+            IF CLSVALUE(I) >= CUR_SCORE THEN GO TO GAME_CLASS;
+        END;
+
+        CALL LINESKP;
+        CALL RSPEAK(319);
+        GO TO GAME_DONE;
+
+GAME_CLASS:
+        CALL SPEAK(CTEXT(I));
+        IF I = CLASSIZE THEN GO TO GAME_MAX;
+        K = CLSVALUE(I) + 1 - CUR_SCORE;
+        TKWORD = 's.';
+        IF K = 1 THEN TKWORD = '.';
+        CALL LINESKP;
+        PUT STRING (OUTSTR) EDIT
+            ('To achieve the next higher rating, you need',
+              K,' more point',TKWORD) (A,F(3),A,2 A);
+        CALL LINEOUT;
+        GO TO GAME_DONE;
+
+GAME_MAX:
+        CALL LINESKP;
+        CALL RSPEAK(320);
+        CALL LINESKP;
+        CALL RSPEAK(321);
+
+GAME_DONE:
+        IF RESUME_GAME THEN DO;
+           OPEN FILE(SUSPENS) TITLE('SUSPEND');
+           IF SUSPEND_MISSING THEN LEAVE;
+           VER_VERSION = '*';
+           WRITE FILE (SUSPENS) FROM (VERIFICATION_RECORD);
+           CLOSE FILE (SUSPENS);
+        END;
+        CALL LINESKP;
+        CALL CIAO;
+
+        RETURN; /* AND BACK TO BIG OZ */
+
+/*
+   CHECK THE MOVE FOR SPECIAL CONDITIONS THAT MAY 
+   PREVENT IT FROM TAKING PLACE.
+*/
+EXAMINE_MOVE: PROC;
+
+/*
+   CHECK FOR THE CAVE CLOSING AND PREVENT A MOVE
+   TO OUTSIDE THE CAVE IF SO. SET THE PANIC BUTTON
+   AND THE CLOSING CLOCK.
+*/
+        IF NEWLOC != 0 & BITSET(NEWLOC,4) & CAVE_CLOSING THEN DO;
+           CALL RSPEAK(130);
+           NEWLOC = LOC;
+           IF !HAS_PANICKED THEN CLOCK2 = 15;
+           HAS_PANICKED = TRUE;
+        END;
+
+/*
+   SEE IF A DWARF HAS SEEN HIM AND HAS COME FROM WHERE HE
+   WANTS TO GO. IF SO, THE DWARF'S BLOCKING HIS WAY. IF
+   COMING FROM PLACE FORBIDDEN TO PIRATE (DWARVES ROOTED
+   IN PLACE) LET HIM GET OUT (AND ATTACKED).
+*/
+        IF NEWLOC != LOC & !FORCED(LOC) & !BITSET(LOC,3) THEN
+           DO I = 1 TO DWARF_NUM;
+              IF !(ODLOC(I) != NEWLOC | !DSEEN(I)) THEN DO;
+                 NEWLOC = LOC;
+                 CALL RSPEAK(2);
+                 RETURN;
+              END;
+           END;
+        RETURN;
+        END EXAMINE_MOVE;
+
+/*
+   HINTS. COME HERE IF HE'S BEEN LONG ENOUGH AT REQUIRED LOCS FOR
+   SOME UNUSED HINT. HINT NUMBER IS INVARIABLE "HINT". MAKE A 
+   QUICK TEST FOR ADDITIONAL CONDITIONS, AND GO TO HINT_ASK IF
+   CONDITIONS ARE MET AND WE WANT TO OFFER THE HINT. GO TO
+   HINT_CLEAR TO CLEAR HINTLOC BACK TO ZERO, HINT_NEXT TO TAKE
+   NO ACTION YET.
+*/
+HINT_CHECK: PROC;
+        DO I = HINTMIN TO HINTSIZE;
+            IF (HINT_TAKEN(I)) THEN GO TO HINT_NEXT;
+
+            IF !BITSET(LOC,I) THEN HINTLOC(I) = -1;
+            HINTLOC(I) = HINTLOC(I) + 1;
+
+            IF HINTLOC(I) < HINTS(I,1) THEN GO TO HINT_NEXT;
+            
+            SELECT (I-HINTMIN):
+               WHEN (00) GO TO HINT_CAVE;     /* CAVE */
+               WHEN (01) GO TO HINT_BIRD;     /* CATCHING BIRD */
+               WHEN (02) GO TO HINT_SNAKE;    /* SNAKE */
+               WHEN (03) GO TO HINT_ALIKE;    /* ALL ALIKE MAZE */
+               WHEN (04) GO TO HINT_DARK;     /* DARK ROOM */
+               WHEN (05) GO TO HINT_WITTS;    /* WITT'S END */
+               WHEN (06) GO TO HINT_SHAPE;    /* SHAPELESS MAZE */
+               WHEN (07) GO TO HINT_MELKOR;   /* MELKOR'S PRISON */
+               WHEN (08) GO TO HINT_FALLS;    /* AT THE FALLS */
+               WHEN (09) GO TO HINT_SHACK;    /* IN THE SHACK */
+               OTHERWISE CALL BUG(27);
+            END;
+
+/*
+   NOW FOR THE QUICK TESTS. SEE DATABASE DESCRIPTION FOR
+   ONE-LINE NOTES.
+*/
+
+HINT_CAVE:
+        IF PROP(GRATE) = 0 & !HERE(KEYS) THEN
+           GO TO HINT_ASK;
+        GO TO HINT_CLEAR;
+
+HINT_BIRD:
+        IF HERE(BIRD) & TOTING(ROD) & OBJ = BIRD THEN
+           GO TO HINT_ASK;
+        GO TO HINT_NEXT;
+
+HINT_SNAKE:
+        IF HERE(SNAKE) & !HERE(BIRD) THEN
+           GO TO HINT_ASK;
+        GO TO HINT_CLEAR;
+
+HINT_ALIKE:
+        IF ATLOC(LOC) = 0 & ATLOC(OLDLOC) = 0
+           & ATLOC(OLDLOC2) = 0 & HOLDING > 1 THEN
+           GO TO HINT_ASK;
+        GO TO HINT_CLEAR;
+
+HINT_DARK:
+        IF PROP(EMERALD) != -1 & PROP(PYRAMID) = -1 THEN
+           GO TO HINT_ASK;
+        GO TO HINT_CLEAR;
+
+HINT_WITTS:
+        GO TO HINT_ASK;
+
+HINT_SHAPE:
+        IF LOC = SHAPELESS_MAZE_6 | 
+           PLACE(STAR)     != SHAPELESS_MAZE_6 |
+           PLACE(CIRCLE)   != SHAPELESS_MAZE_6 |
+           PLACE(SQUARE)   != SHAPELESS_MAZE_6 |
+           PLACE(HEXAGON)  != SHAPELESS_MAZE_6 |
+           PLACE(PENTAGON) != SHAPELESS_MAZE_6 THEN
+           GO TO HINT_CLEAR;
+        GO TO HINT_ASK;
+
+HINT_MELKOR:
+        GO TO HINT_ASK;
+
+HINT_FALLS:
+        GO TO HINT_ASK;
+
+HINT_SHACK:
+        IF HERE(BAR) THEN
+           GO TO HINT_CLEAR;
+        GO TO HINT_ASK;
+
+HINT_ASK:
+        IF !YES(HINTS(I,3),0,SPK_OK) THEN
+           GO TO HINT_CLEAR;
+        CALL LINESKP;
+        PUT STRING (OUTSTR) EDIT
+           ('I am prepared to give you a hint, but it will cost you',
+              HINTS(I,2),' points.') (A,F(3),A);
+        CALL LINEOUT;
+        HINT_TAKEN(I) = YES(175,HINTS(I,4),SPK_OK);
+        IF HINT_TAKEN(I) & LAMP_LIFE > 30 THEN
+           LAMP_LIFE = LAMP_LIFE + 30*HINTS(I,2);
+
+HINT_CLEAR:
+        HINTLOC(I) = 0;
+
+HINT_NEXT:
+        END;
+        RETURN;
+        END HINT_CHECK;
+
+/*
+   CHECK FOR THE LAMP GOING OUT.
+   IF FRESH BATTERIES ARE HERE, WE REPLACE THEM AND GO ON.
+   IF NOT, A WARNING IS ISSUED.
+   WHEN IT ACTUALLY RUNS OUT, A MESSAGE IS ISSUED.
+   IF THE ADVENTURER IS OUTSIDE THE CAVE, WE FORCE HIM TO
+   GIVE UP, SINCE THERE IS NO POINT IN EXPLORING THE WOODS.
+*/
+CHECK_LAMP: PROC;
+       SPK = 0;
+       IF PROP(LAMP) = 1 THEN DO;
+          LAMP_LIFE = LAMP_LIFE - 1;
+          IF BITSET(LOC,4) THEN DO;
+             OUTSIDE_LAMP = OUTSIDE_LAMP + 1;
+             IF MOD(OUTSIDE_LAMP,10) = 0 THEN SPK = 312;
+          END;
+       END;
+
+       IF LAMP_LIFE <= 30 & HERE(BATTERY) & PROP(BATTERY) != 1
+          & HERE(LAMP) THEN DO;
+          SPK = 188;
+          IF TOTING(BATTERY) THEN CALL DROPIT(BATTERY, LOC);
+          IF PROP(BATTERY) = 0 THEN I = 2500;
+                               ELSE I = 500;
+          LAMP_LIFE = LAMP_LIFE + I;
+          PROP(BATTERY) = 1;
+          LAMP_WARNING = FALSE;
+          RETURN;
+       END;
+
+       IF LAMP_LIFE = 0 THEN DO;
+          LAMP_LIFE =-1;
+          PROP(LAMP) = 0;
+          IF HERE(LAMP) THEN SPK = 184;
+          RETURN;
+       END;
+
+       IF LAMP_LIFE < 0 & BITSET(LOC,4) THEN DO;
+          SPK = 185;
+          GAVE_UP = TRUE;
+          RETURN;
+       END;
+
+       IF LAMP_LIFE <= 30 THEN DO;
+          IF LAMP_WARNING | !HERE(LAMP) THEN RETURN;
+          LAMP_WARNING= TRUE;
+          SPK = 187;
+          IF PLACE(BATTERY) = 0 THEN SPK = 183;
+          IF PROP(BATTERY) = 1 THEN SPK = 189;
+          RETURN;
+       END;
+
+       END CHECK_LAMP;
+
+/*
+   EVERY INPUT, CHECK "FOOBAR" FLAG. IF ZERO, NOTHING'S 
+   GOING ON. IF POSITIVE, MAKE NEGATIVE. IF NEGATIVE, HE
+   SKIPPED A WORD, SO CHANGE IT BACK TO ITS BASE.
+
+   SAME ALGORITHM FOR INCANTATIONS WIND_CANT AND GREEK_CANT,
+   EXCEPT THEIR BASE IS DIFFERENT.
+
+   CHECK THE CONDITION OF THE FALLS AND MAKE APPROPRIATE
+   ADJUSTMENTS.
+*/
+SPECIAL_CHECKS: PROC;
+        FOOBAR = MIN(-(FEE-1),-FOOBAR);
+        WIND_CANT = MIN(-(NAKRL-1),-WIND_CANT);
+        GREEK_CANT = MIN(-(ALPHA-1),-GREEK_CANT);
+
+        IF PROP(FALLS) = 2 THEN
+           IF FALLS_FLOOD > 0
+              THEN DO;
+                 FALLS_FLOOD = FALLS_FLOOD - 1;
+                 FALLS_LAST = 2;
+              END;
+           ELSE PROP(FALLS) = 0;
+        ELSE;
+
+        IF PROP(FALLS) = 1 THEN
+           IF FALLS_STOP > 0 
+              THEN DO;
+                 FALLS_STOP = FALLS_STOP - 1;
+                 FALLS_FLOOD = FALLS_FLOOD + 1;
+                 FALLS_LAST = 1;
+              END;
+           ELSE PROP(FALLS) = 0;
+        ELSE;
+
+        IF PROP(FALLS) = 0 & FALLS_FLOOD > 0 &
+           (FALLS_LAST != 2 | FALLS_STOP = 0)
+           THEN PROP(FALLS) = 2;
+
+        IF PROP(FALLS) = 0 & FALLS_STOP > 0 &
+           (FALLS_LAST != 1 | FALLS_FLOOD = 0)
+           THEN PROP(FALLS) = 1;
+
+        RETURN;
+        END SPECIAL_CHECKS;
+
+/*
+   DESCRIBE THE CURRENT LOCATION
+*/
+DESCRIBE_CURRENT_LOCATION: PROC;
+
+        IF IS_DEAD | GAME_OVER THEN RETURN;
+        IF STAFF_SNICKER & HERE(STAFF) THEN CALL RSPEAK(287);
+
+        KK = STEXT(LOC);
+        IF MOD(ABB(LOC),ABBNUM) = 0 | KK = 0 THEN KK = LTEXT(LOC);
+        IF FORCED(LOC) | !DARK THEN GO TO DESCRIBE_THE_PLACE;
+
+        IF WAS_DARK & (OLDLOC != MIRROR_ROOM) THEN DO;
+           IF PERCENT(25) THEN DO;
+              CALL RSPEAK(23);
+              OLDLOC2 = LOC;
+              IS_DEAD = TRUE;
+              RETURN;
+           END;
+           IF PERCENT(25) THEN DO;
+              SPK = 328;
+              IS_HURT = TRUE;
+              RETURN;
+           END;
+        END;
+
+        KK = RTEXT(16);
+      
+DESCRIBE_THE_PLACE:
+        IF TOTING(BEAR) THEN CALL RSPEAK(141);
+        CALL SPEAK(KK);
+        IF HOLDMAX != HOLDPREV THEN DO;
+           IF HOLDMAX < HOLDPREV THEN 
+              PUT STRING (OUTSTR) EDIT
+                  ('You can carry only',HOLDMAX,' items now.')
+                  (A,F(3),A);
+           ELSE
+              PUT STRING (OUTSTR) EDIT
+                  ('You can now carry',HOLDMAX,' items.')
+                  (A,F(3),A);
+           CALL LINEOUT;
+           HOLDPREV = HOLDMAX;
+        END;
+        IF FORCED(LOC) THEN DO;
+           K = 1;
+           CALL NEW_PLACE;
+           RETURN;
+        END;
+        IF LOC = Y_2 & PERCENT(25) & !CAVE_CLOSING THEN
+           CALL RSPEAK(8);
+
+/*
+   PRINT OUT DESCRIPTIONS OF OBJECTS AT THIS LOCATION. IF NOT
+   CLOSING AND PROPERTY VALUE IS NEGATIVE, TALLY OFF ANOTHER
+   TREASURE. RUG IS SPECIAL CASE. ONCE SEEN, ITS PROP IS 1
+   (DRAGON ON IT) TILL DRAGON IS KILLED. SIMILARLY FOR CHAIN.
+   PROP IS INITIALLY 1 (LOCKED TO BEAR). AND THE SAME FOR THE
+   CHALICE. PROP IS 1 (INVISIBLE). THESE HACKS ARE BECAUSE
+   PROP=0 IS NEEDED TO GET FULL SCORE.
+*/
+        IF DARK THEN RETURN;
+        ABB(LOC) = ABB(LOC) + 1;
+        I = ATLOC(LOC);
+
+DESCRIBE_NEXT_OBJECT:
+        IF I = 0 THEN RETURN;
+        OBJ = I;
+        IF OBJ > OBJ_MAX THEN OBJ = OBJ - OBJ_MAX;
+        IF OBJ = STEPS & TOTING(NUGGET) THEN
+           GO TO DESCRIBE_LINK_OBJECT;
+        IF PROP(OBJ) >= 0 THEN
+           GO TO DESCRIBE_THIS_OBJECT;
+        IF CAVE_CLOSED & !PAST_CLOSING THEN
+           GO TO DESCRIBE_LINK_OBJECT;
+        PROP(OBJ) = 0;
+        IF OBJ = RUG | OBJ = CHALICE | OBJ = CHAIN THEN
+           PROP(OBJ) = 1;
+        TREASURE_LEFT = TREASURE_LEFT - 1;
+
+/*
+   REMAINING TREASURES TOO ELUSIVE, ZAP HIS LAMP.
+*/
+        IF TREASURE_LEFT = TREASURE_LOST & TREASURE_LEFT != 0 THEN
+           LAMP_LIFE = MIN(35,LAMP_LIFE);
+
+DESCRIBE_THIS_OBJECT:
+        KK = PROP(OBJ);
+        IF OBJ = STEPS & LOC = FIXED(STEPS) THEN KK = 1;
+        CALL PSPEAK(OBJ,KK);
+
+DESCRIBE_LINK_OBJECT:
+        I = LINK(I);
+        GO TO DESCRIBE_NEXT_OBJECT;
+
+        END DESCRIBE_CURRENT_LOCATION;
+
+/*
+   START DECODING THE ADVENTURER'S COMMAND.
+   CERTAIN WORDS HAVE TO BE HANDLED IN A SPECIAL MANNER,
+   SINCE THEY MAY BE BOTH VERB AND OBJECT OR IMPLY A
+   SPECIAL ACTION.
+*/
+ANALYZE_WORDS: PROC RETURNS(FIXED BIN(31));
+        IF WORD(1) != 'ENTER' THEN GO TO ANALYZE_FIRST_WORD;
+        IF WORD(2) = ' ' THEN GO TO ANALYZE_FIRST_WORD;
+
+        SPK = 43;
+        IF LIQLOC(LOC) = WATER THEN SPK = 70;
+
+        IF WORD(2) = 'STREAM' | WORD(2) = 'WATER' THEN
+           GO TO ANALYZE_SPK;
+
+ANALYZE_SECOND_WORD:
+        WORD(1) = WORD(2);
+        WORDX(1) = WORDX(2);
+        WORD(2), WORDX(2) = ' ';
+
+ANALYZE_FIRST_WORD:
+        IF WORD(1) = 'MAGIC' THEN DO;
+           SAID_MAGIC = SAID_MAGIC + 1;
+           IF SAID_MAGIC > 20 THEN WORD(1) = 'SHAZAM';
+        END;
+        IF WORD(1) = 'WEST' THEN DO;
+           SAID_WEST = SAID_WEST + 1;
+           IF SAID_WEST = 10 THEN CALL RSPEAK(17);
+        END;
+        IF WORD(1) = 'HELP' & LOC != SEVENTH_POOL THEN 
+           WORD(1) = '?';
+
+/*
+   LOOK UP THE WORD IN THE VOCABULARY.
+*/
+        I = VOCAB(WORD(1),-1);
+        IF I = -1 THEN DO;    /* DON'T UNDERSTAND */
+           SPK = 60;
+           IF PERCENT(20) THEN SPK = 61;
+           IF PERCENT(20) THEN SPK = 13;
+           IF !SIZE_WARNING THEN SPK = 314;
+           SIZE_WARNING = TRUE;
+           GO TO ANALYZE_SPK;
+        END;
+
+        K = MOD(I,1000);
+        SPK = K;
+        SELECT (I/1000);
+           WHEN (0) GO TO ANALYZE_MOVE;
+           WHEN (1) GO TO ANALYZE_OBJECT;
+           WHEN (2) GO TO ANALYZE_VERB;
+           WHEN (3) GO TO ANALYZE_SPK;
+           WHEN (4) GO TO ANALYZE_OFF_SPRING;
+           OTHERWISE CALL BUG(22);
+        END;
+
+/*
+   SPECIAL CASE OF A NAME, ANNOUNCE THE OFFSPRING.
+*/
+ANALYZE_OFF_SPRING:
+        J = 1;
+        IF K = GLORN | (PERCENT(50) & K != AKIBA) THEN J = -1;
+        L = K - AKIBA + J;
+        WORD(1) = LOOKUP(L);
+        I = INDEX(WORD(1),' ') - 1;
+        IF I = -1 THEN I = LENGTH(WORD(1));
+        TKWORD = SUBSTR(WORD(1),1,I);
+        IF J = 1 THEN
+           PUT STRING(OUTSTR) EDIT('Ah!  The father of ',TKWORD,'.')
+                                  (3 A);
+        ELSE
+           PUT STRING(OUTSTR) EDIT('Ah!  The son of ',TKWORD,'.')
+                                  (3 A);
+        CALL LINEOUT;
+        GO TO ANALYZE_INPUT;
+
+/*
+   ANALYE AN OBJECT WORD. SEE IF THE THING IS HERE, WHETHER
+   WE'VE GOT A VERB YET, AND SO ON. OBJECT MUST BE HERE UNLESS
+   VERB IS "FIND" OR "INVENTORY" (AND NO NEW VERB YET TO BE
+   ANALYZED). WATER AND OIL ARE ALSO FUNNY, SINCE THEY ARE NEVER
+   ACTUALLY DROPPED AT ANY LOCATION, BUT MIGHT BE HERE INSIDE
+   THE BOTTLE OR AS A FEATURE OF THE LOCATION.
+*/
+ANALYZE_OBJECT:
+        IF K = ROPE & PROP(ROPE) = 1 & AT(CREVASSE) THEN
+           CALL MOVE(ROPE,LOC);
+
+        IF K = RING & HERE(RING)
+           THEN IF HERE(RING1)
+                THEN K = RING1;
+           ELSE IF HERE(RING2)
+                THEN K = RING2;
+           ELSE IF HERE(RING3)
+                THEN K = RING3;
+           ELSE IF HERE(RING4)
+                THEN K = RING4;
+
+        IF (K = WATER | K = OIL) &
+           (WORD(2) = 'PLANT' | WORD(2) = 'DOOR') THEN
+           IF AT(VOCAB(WORD(2),1)) THEN WORD(2) = 'POUR';
+
+        OBJ = K;
+
+        IF DARK & !TOTING(OBJ) & (VERB != DROP | VERB = 0) THEN
+           GO TO ANALYZE_NO_OBJECT;
+
+        IF (OBJ = ALL | FIXED(K) = LOC | HERE(K)) & OBJ != CHALICE
+           THEN GO TO ANALYZE_OBJECT_VERB;
+
+        IF K = GRATE THEN
+           DO;
+              IF LOC = END_OF_ROAD
+               | LOC = IN_VALLEY
+               | LOC = SLIT_IN_STREAMBED THEN K = DEPRESSION;
+              IF LOC > BELOW_GRATE
+               & LOC < HALL_OF_MISTS THEN K = ENTRANCE;
+              IF K != GRATE THEN GO TO ANALYZE_MOVE;
+              GO TO ANALYZE_MOVE;
+           END;
+
+        SELECT (K);
+           WHEN (HERB)      IF DLOC(TRUCK_NUM) = LOC THEN K = 0;
+           WHEN (DRAGON)    IF DLOC(DRAGON_NUM) = LOC THEN K = 0;
+           WHEN (MOLE)      IF DLOC(MURDOC_NUM) = LOC THEN K = 0;
+           WHEN (MONSTER)   IF DLOC(NOSTRIL_NUM) = LOC THEN K = 0;
+           WHEN (DWARF)     DO I = 1 TO DWARF_NUM;
+                               IF DLOC(I) = LOC & DFLAG >= 2
+                                  THEN K = 0;
+                            END;
+           WHEN (KNIFE)     IF KNIFE_LOC = LOC THEN
+                               DO;
+                                  KNIFE_LOC = -1;
+                                  SPK = 116;
+                                  GO TO STAY_AND_SAY_SPK;
+                               END;
+           WHEN (OIL,WATER) IF (LIQ = K & HERE(BOTTLE))
+                              | K = LIQLOC(LOC) THEN K = 0;
+           WHEN (PLANT)     IF AT(PLANT2) & PROP(PLANT2) != 0 THEN
+                               OBJ = PLANT2;
+           WHEN (ROD)       IF HERE(ROD2) THEN OBJ = ROD2;
+           WHEN (CHALICE)   IF PROP(CHALICE) != 1 THEN K = 0;
+           OTHERWISE;
+        END;
+
+ANALYZE_NO_OBJECT:
+        IF OBJ = K THEN DO;
+           IF (VERB = FIND | VERB = INVENTORY) & WORD(2) = ' ' THEN
+              LEAVE;
+           CALL LINESKP;
+           CALL COMBINE_WORDS(WORD(1),WORDX(1));
+           PUT STRING (OUTSTR) EDIT
+              ('I see no ',TKWORD,' here!') (3 A);
+           CALL LINEOUT;
+           GO TO ANALYZE_INPUT;
+        END;
+
+ANALYZE_OBJECT_VERB:
+        IF VERB != 0 THEN GO TO ANALYZE_ACTION;
+        IF WORD(2) != ' ' THEN GO TO ANALYZE_SECOND_WORD;
+        CALL LINESKP;
+        CALL COMBINE_WORDS(WORD(1),WORDX(1));
+        PUT STRING (OUTSTR) EDIT
+            ('What do you want to do with the ',TKWORD,'?') (3 A);
+        CALL LINEOUT;
+        GO TO ANALYZE_RETRY;
+
+/*
+   ANALYZE A VERB.  REMEMBER WHAT IT WAS, GO BACK FOR OBJECT
+   IF SECOND WORD UNLESS VERB IS "SAY", WHICH SNARFS ARBITRARY
+   SECOND WORD.
+*/
+ANALYZE_VERB:
+        VERB = K;
+        IF VERB = SAY THEN
+           IF WORD(2) != ' ' THEN OBJ = -1;
+        IF VERB = DIG & WORD(2) = 'HOLE' THEN OBJ = HOLE;
+        IF OBJ != - THEN GO TO ANALYZE_ACTION;
+        IF WORD(2) != ' ' THEN GO TO ANALYZE_SECOND_WORD;
+        GO TO ANALYZE_ACTION;
+
+ANALYZE_SPK:
+        RETURN(0);
+ANALYZE_MOVE:
+        RETURN(1);
+ANALYZE_INPUT:
+        RETURN(2);
+ANALYZE_ACTION:
+        RETURN(3);
+ANALYZE_RETRY:
+        RETURN(4);
+
+        END ANALYZE_WORDS;
+
+/*
+   FIGURE OUT THE NEW LOCATION.
+
+   GIVEN THE CURRENT LOCATION IN "LOC", AND A MOTION VERB
+   NUMBER IN "K", PUT THE NEW LOCATION IN "NEWLOC". THE
+   CURRENT LOC IS SAVED IN "OLDLOC" IN CASE HE WANTS TO
+   RETREAT. THE CURRENT OLDLOC IS SAVED IN OLDLOC2, IN CASE
+   HE DIES. (IF HE DOES, NEWLOC WILL BE LIMBO, AND OLDLOC
+   WILL BE WHAT KILLED HIM, SO WE NEED OLDLOC2, WHICH IS
+   THE LAST PLACE HE WAS SAFE.)
+*/
+NEW_PLACE: PROC;
+        KK = KEY(LOC);
+        NEWLOC = LOC;
+
+        IF KK = 0 THEN CALL BUG(26);
+        IF K = NULLX THEN RETURN;
+        IF K = BACK THEN GO TO GO_BACK;
+        IF K = LOOK THEN GO TO GO_LOOK;
+        IF K = CAVE THEN GO TO WHERE_CAVE;
+
+        OLDLOC2 = OLDLOC;
+        OLDLOC = LOC;
+        IF OLDLOC = DAMP_ROOM & PROP(FROG) < 5 THEN
+           PROP(FROG) = PROP(FROG) + 1;
+
+TRAVEL_SCAN:
+        LLL = ABS(TRAVEL(KK);
+        IF MOD(LLL,1000) = 1 | MOD(LLL,1000) = K THEN
+           GO TO TRAVEL_SEPARATE;
+        IF TRAVEL(KK) < 0 THEN
+           GO TO NON_APPLIC_MOTION;
+        KK = KK + 1;
+        GO TO TRAVEL_SCAN;
+
+TRAVEL_SEPARATE:
+        LLL = LLL/1000;
+
+TRAVEL_DETERMINE:
+        NEWLOC = LLL/4000;
+        K = MOD(NEWLOC-100,OBJ_MAX);
+        IF NEWLOC <= 1100 THEN
+           GO TO TRAVEL_PROP;
+        IF PROP(K) != (NEWLOC-1100)/OBJ_MAX THEN
+           GO TO TRAVEL_SET;
+
+TRAVEL_NEXT:
+        IF TRAVEL(KK) < 0 THEN CALL BUG(25);
+        KK = KK + 1;
+        NEWLOC = ABS(TRAVEL(KK))/1000;
+        IF NEWLOC = LLL THEN
+           GO TO TRAVEL_NEXT;
+        LLL = NEWLOC;
+        GO TO TRAVEL_DETERMINE;
+
+TRAVEL_PROP:
+        IF NEWLOC <= 100 THEN
+           GO TO TRAVEL_CONDITIONAL;
+        IF TOTING(K) | (NEWLOC > 600 & AT(K)) THEN
+           GO TO TRAVEL_SET;
+        GO TO TRAVEL_NEXT;
+
+TRAVEL_CONDITIONAL:
+        IF NEWLOC != 0 & !PERCENT(NEWLOC) THEN
+           GO TO TRAVEL_NEXT;
+
+TRAVEL_SET:
+        NEWLOC = MOD(LLL,4000);
+        IF NEWLOC  = 0    THEN IS_DEAD = TRUE;
+        IF NEWLOC <= 1000 THEN RETURN;
+        IF NEWLOC <= 1500 THEN GO TO SPECIAL_MOTIONS;
+        IF NEWLOC >  3000 THEN GO TO NO_WAY_BACK;
+
+        CALL RSPEAK(NEWLOC-1500);
+        NEWLOC = LOC;
+        RETURN;
+
+NO_WAY_BACK:
+        NEWLOC = NEWLOC - 3000;
+        OLDLOC = NEWLOC;
+        RETURN;
+
+/*
+   SPECIAL MOTIONS COME HERE.
+   LOCATION NUMBERS NNNN (NNNN = 1000 - 1500).
+*/
+SPECIAL_MOTIONS:
+        SELECT (NEWLOC-1000);
+           WHEN (1) GO TO PLOVER_PASSAGE;
+           WHEN (2) GO TO PLOVER_TRANSPORT;
+           WHEN (3) GO TO TROLL_BRIDGE;
+           WHEN (4) GO TO PAPER_BIRD;
+           WHEN (5) GO TO LORD_KAZAK;
+           WHEN (6) GO TO RUSTY_DOOR;
+           OTHERWISE CALL BUG(20);
+        END;
+
+/*
+   TRAVEL 1001.
+   PLOVER-ALCOVE PASSAGE.  CAN CARRY ONLY EMERALD.
+   NOTE: TRAVEL TABLE MUST INCLUDE "USELESS" ENTRIES
+   GOING THROUGH PASSAGE, WHICH CAN NEVER BE USED
+   FOR ACTUAL MOTION, BUT CAN BE SPOTTED BY "GO BACK".
+*/
+PLOVER_PASSAGE:
+        NEWLOC = PLOVER_ALCOVE + PLOVER_ROOM - LOC;
+        IF HOLDING = 0 | (HOLDING = 1 & TOTING(EMERALD)) THEN
+           RETURN;
+        NEWLOC = LOC;
+        CALL RSPEAK(117);
+        RETURN;
+
+/*
+   TRAVEL 1002.
+   PLOVER TRANSPORT. DROP THE EMERALD (ONLY USE SPECIAL
+   TRAVEL IF TOTING IT), SO HE'S FORCED TO USE THE
+   PLOVER-PASSAGE TO GET IT OUT. HAVING DROPPED IT, GO
+   BACK AND PRETEND HE WASN'T CARRYING IT AFTER ALL.
+*/
+PLOVER_TRANSPORT:
+        CALL DROPIT(EMERALD,LOC);
+        GO TO TRAVEL_NEXT;
+
+/*
+   TRAVEL 1003.
+   TROLL BRIDGE. MUST BE DONE ONLY AS SPECIAL MOTION SO
+   THAT DWARVES WON'T WANDER ACROSS AND ENCOUNTER THE
+   BEAR. (THEY WON'T FOLLOW THE PLAYER THERE BECAUSE
+   THAT REGION IS FORBIDDEN TO THE PIRATE.) IF PROP(TROLL)=1,
+   HE'S CROSSED SINCE PAYING, SO STEP OUT AND BLOCK HIM.
+   (STANDARD TRAVEL ENTRIES CHECK FOR PROP(TROLL)=0.)
+   SPECIAL STUFF FOR BEAR.
+*/
+TROLL_BRIDGE:
+        IF PROP(TROLL) != 1 THEN GO TO TROLL_SCARE;
+        CALL PSPEAK(TROLL,1);
+        PROP(TROLL) = 0;
+        CALL MOVE(TROLL2,0);
+        CALL MOVE(TROLL2+OBJ_MAX,0);
+        CALL MOVE(TROLL,PLAC(TROLL));
+        CALL MOVE(TROLL+OBJ_MAX,FIXD(TROLL));
+        CALL JUGGLE(CHASM);
+        NEWLOC = LOC;
+        RETURN;
+
+TROLL_SCARE:
+        NEWLOC = PLAC(TROLL) + FIXD(TROLL) - LOC;
+        IF PROP(TROLL) = 0 THEN PROP(TROLL) = 1;
+        IF !TOTING(BEAR) THEN RETURN;
+        CALL RSPEAK(162);
+        PROP(CHASM) = 1;
+        PROP(TROLL) = 2;
+        CALL DROPIT(BEAR,NEWLOC);
+        FIXED(BEAR) = -1;
+        PROP(BEAR) = 3;
+        OLDLOC2 = NEWLOC;
+        IS_DEAD = TRUE;
+        RETURN;
+
+/*
+   TRAVEL 1004.
+   CHANGE THE WAD OF PAPER INTO A BIRD.
+*/
+PAPER_BIRD:
+        CALL DESTROY(WAD);
+        PROP(BIRD) = 0;
+        CALL DROPIT(BIRD,IN_FOREST);
+        CALL RSPEAK(249);
+        GO TO TRAVEL_NEXT;
+
+/*
+   TRAVEL 1005.
+   LORD KAZAK.  FIRST ASKS FOR AN ANCESTOR.  IF ANSWERED CORRECTLY,
+   ALLOWS THE PERSON TO PASS.  OTHERWISE SENDS THEM BACK TO LEARN.
+   LETS THE POOR PERSON KEEP THE LAMP.
+*/
+LORD_KAZAK:
+        IF PROP(KAZAK) = 0 THEN CALL RSPEAK(233);
+        PROP(KAZAK) = 1;
+        L = AKIBA + RAN(GLORN-AKIBA+1);
+        WORD(1) = LOOKUP(L);
+        I - INDEX(WORD(1),' ') - 1;
+        TKWORD = SUBSTR(WORD(1),1,I);
+        K = 1;
+        IF L = GLORN | (PERCENT(50) & L != AKIBA) THEN K = -1;
+        CALL RSPEAK(322);
+        IF K = 1 THEN
+           PUT STRING (OUTSTR) EDIT
+              ('     Who is the son of ',TKWORD,'?') (3 A);
+        ELSE
+           PUT STRING (OUTSTR) EDIT
+              ('     Who is the father of ',TKWORD,'?') (3 A);
+        CALL LINEOUT;
+        BUFFERED_CMDS = FALSE;
+        CALL GET_INPUT;
+
+        I = VOCAB(WORD(1),-1);
+        WORD(1) = LOOKUP(L+K);  /* LOOK UP CORRECT NAME */
+        J = VOCAB(WORD(1),-1);  /* AND GET THE RIGHT NUMBER */
+
+        IF I/1000 != 4 | WORDX(1) != ' ' THEN
+           SPK = 223; /* NO RELATIVE NAMED THAT */
+        ELSE DO;
+           I = MOD(I,1000);
+           J = MOD(J,1000);
+           SPK = 224;     /* ASSUME WRONG */
+           IF I = J THEN DO;
+              CALL RSPEAK(225);  /* GOOD JOB, HE VANISHES */
+              LOC = KAZAKS_CHAMBER;
+              OLDLOC, NEWLOC = LOC;
+              PROP(KAZAK) = 0;
+              RETURN;
+           END;
+        END;
+        CALL RSPEAK(SPK);
+        I = INDEX(WORD(1),' ') - 1;
+        IF I = -1 THEN I = LENGTH(WORD(1));
+        TKWORD = SUBSTR(WORD(1),1,I);
+        IF K = 1 THEN
+           PUT STRING(OUTSTR) EDIT('(',TKWORD,' was the son.)')
+                (3 A);
+        ELSE
+           PUT STRING(OUTSTR) EDIT('(',TKWORD,' was the father.)')
+                (3 A);
+        CALL LINEOUT;
+
+/*
+   WRONG NAME, LEAVE EVERYTHING I KAZAK'S PLACE
+*/
+        PLACE(WATER) = 0;
+        PLACE(OIL) = 0;
+        DO I = OBJ_MAX TO 1 BY -1;
+           IF TOTING(I) & I != LAMP THEN
+              CALL DROPIT(I,KAZAKS_CHAMBER);
+        END;
+        CALL JUGGLE(KAZAK);
+        LOC = GENEOLOGY_ROOM;
+        OLDLOC, NEWLOC = LOC;
+        RETURN;
+
+/*
+   TRAVEL 1006.
+   RUSTY DOOR.  DOOR MUST BE OPEN (PROP=2), ELSE THE WAY
+   IS BLOCKED.
+*/
+RUSTY_DOOR:
+        NEWLOC = CAVERN_WITH_WATERFALL;
+        IF PROP(DOOR) = 2 THEN RETURN;
+        NEWLOC = LOC;
+        SPK = 111;
+        IF PROP(DOOR) = 1 THEN SPK = 302;
+        CALL RSPEAK(SPK);
+        RETURN;
+
+/*
+   HANDLE "GO BACK". LOOK FOR VERB WHICH GOES FROM LOC TO
+   OLDLOC, OR TO OLDLOC2 IF OLDLOC HAS FORCED-MOTION. I
+   SAVES ENTRY -> FORCED LOC -> PREVIOUS LOC;
+*/
+GO_BACK:
+        K = OLDLOC;
+        IF FORCED(K) THEN K = OLDLOC2;
+        OLDLOC2 = OLDLOC;
+        OLDLOC = LOC;
+        I = 0;
+
+        IF K = LOC THEN DO;
+           CALL RSPEAK(91); /* CAN'T REMEMBER HOW YOU GOT HERE */
+           RETURN;
+        END;
+
+        DO UNTIL (L = K);
+           LLL = ABS(TRAVEL(KK))/1000; /* REMOVE TRAVEL VERB */
+           L = MOD(LLL,4000);  /* SEPARATE NEWLOC + CONDITION */
+           IF L > 3000 THEN L = L - 3000;
+           IF L = K THEN I = KK;
+           ELSE IF L <= 1000 THEN DO;
+              J - KEY(L);
+              LLL = ABS(TRAVEL(J))/1000; /* REMOVE TRAVEL VERB */
+              IF FORCED(L) & MOD(LLL,4000) = K THEN I = KK;
+           END;
+
+           IF TRAVEL(KK) < 0 | I != 0 THEN LEAVE;
+           KK = KK + 1;
+        END; /* DO UNTIL */
+
+        KK = I;
+        IF KK = 0 THEN DO;
+           CALL RSPEAK(140); /* YOU CAN'T GET THERE FROM HERE */
+           RETURN;
+        END;
+
+        LLL = ABS(TRAVEL(KK)); /* NOW CHANGE 'BACK' TO THE FIRST */
+        K = MOD(LLL,1000);     /* VERB THAT WILL GET US BACK     */
+        KK = KEY(LOC);
+        GO TO TRAVEL_SCAN;
+
+/*
+   LOOK. CAN'T GIVE MORE DETAIL. PRETEND IT WASN'T DARK (THOUGH
+   IT MAY "NOW" BE DARK) SO HE WON'T FALL INTO A PIT WHILE STARING
+   INTO THE GLOOM.
+*/
+GO_LOOK:
+        IF DETAIL < 3 THEN CALL RSPEAK(15);
+        DETAIL = DETAIL + 1;
+        WAS_DARK = FALSE;
+        ABB(LOC) = 0;
+        RETURN;
+
+/*
+   CAVE. DIFFERENT MESSAGES DEPENDING ON WHETHER ABOVE GROUND.
+*/
+WHERE_CAVE:
+        IF BITSET(LOC,4) THEN SPK = 57;
+        ELSE SPK = 58;
+        CALL RSPEAK(SPK);
+        RETURN;
+
+/*
+   NON-APPLICABLE MOTION. VARIOUS MESSAGES DEPENDING ON WORD
+   GIVEN.
+*/
+NON_APPLIC_MOTION:
+        SPK = 12;
+        IF (K >= EAST & K <= NORTHWEST)
+         | K = UP | K = DOWN THEN SPK = 9;
+        IF K = FORWARD | K = LEFT | K = RIGHT THEN SPK = 10;
+        IF K = OUTSIDE | K = INSIDE THEN SPK = 11;
+        IF VERB = FIND | VERB = INVENTORY THEN SPK = 59;
+        IF K = CRAWL THEN SPK = 80;
+        IF K = MAGIC | K = PRUGH | K = FRIEND THEN SPK = 42;
+        CALL RSPEAK(SPK);
+        RETURN;
+
+        END NEW_PLACE;
+
+/*
+   HERE'S ALL THE GOOD STUFF
+   THIS IS CALLED AS A FUNCTION IN ORDER TO RETURN A VALUE
+   THAT WILL DICTATE THE FINAL RESULT OF THE ACTION TAKEN.
+*/
+ACTION_VERBS: PROC (TRANSITIVE) RETURNS(FIXED BIN(31));
+
+        DCL TRANSITIVE BIT(1);
+
+        IF OBJ = MOLE & VERB != WALK THEN DO;
+           SPK = 246;
+           ODLOC(MURDOC_NUM), DLOC(MURDOC_NUM) = MOLE_ROOM;
+           DSEEN(MURDOC_NUM) = 0;
+           GO TO RETURN_SPK;
+        END;
+
+        SPK = ACTION_SPK(VERB);
+        J = VERB;
+        IF TRANSITIVE THEN J = VERB + 1000;
+
+/*
+   A TRANSITIVE VERB HAS 1000 ADDED TO IT SO THAT IT CAN BE
+   DIFFERENTIATED FROM THE INTRANSITIVE VERB IN THE SELECT.
+*/
+        SELECT (J);
+           WHEN (TAKE)           GO TO TAKE_WHATEVER;
+           WHEN (TAKE+1000)      GO TO TAKE_OBJECT;
+           WHEN (DROP)           GO TO RANDOM_INTRANS;
+           WHEN (DROP+1000)      GO TO DISCARD_OBJECT;
+           WHEN (SAY)            GO TO RANDOM_INTRANS;
+           WHEN (SAY+1000)       GO TO SAY_WHAT;
+           WHEN (OPEN)           GO TO OPEN_WHATEVER;
+           WHEN (OPEN+1000)      GO TO OPEN_CLOSE;
+           WHEN (NOTHING)        GO TO RETURN_OK;
+           WHEN (NOTHING+1000)   GO TO RETURN_OK;
+           WHEN (LOCK)           GO TO OPEN_WHATEVER;
+           WHEN (LOCK+1000)      GO TO OPEN_CLOSE;
+           WHEN (ON)             GO TO LAMP_ON;
+           WHEN (ON+1000)        GO TO LAMP_ON;
+           WHEN (OFF)            GO TO LAMP_OFF;
+           WHEN (OFF+1000)       GO TO LAMP_OFF;
+           WHEN (WAVE)           GO TO RANDOM_INTRANS;
+           WHEN (WAVE+1000)      GO TO WAVE_FLAG;
+           WHEN (CALM)           GO TO RANDOM_INTRANS;
+           WHEN (CALM+1000)      GO TO RETURN_SPK;
+           WHEN (WALK)           GO TO FOLLOW_MOLE;
+           WHEN (WALK+1000)      GO TO FOLLOW_MOLE;
+           WHEN (KILL)           GO TO ATTACK_OBJECT;
+           WHEN (KILL+1000)      GO TO ATTACK_OBJECT;
+           WHEN (POUR)           GO TO POUR_LIQUID;
+           WHEN (POUR+1000)      GO TO POUR_LIQUID;
+           WHEN (EAT)            GO TO EAT_WHATEVER;
+           WHEN (EAT+1000)       GO TO EAT_OBJECT;
+           WHEN (DRINK)          GO TO DRINK_LIQUID;
+           WHEN (DRINK+1000)     GO TO DRINK_LIQUID;
+           WHEN (RUB)            GO TO RANDOM_INTRANS;
+           WHEN (RUB+1000)       GO TO RUB_A_DUB_DUB;
+           WHEN (THROW)          GO TO RANDOM_INTRANS;
+           WHEN (THROW+1000)     GO TO THROW_OBJECT;
+           WHEN (QUIT)           GO TO WANNA_QUIT;
+           WHEN (QUIT+1000)      GO TO WANNA_QUIT;
+           WHEN (FIND)           GO TO RANDOM_INTRANS;
+           WHEN (FIND+1000)      GO TO FIND_INVENTORY;
+           WHEN (INVENTORY)      GO TO TAKE_INVENTORY;
+           WHEN (INVENTORY+1000) GO TO TAKE_INVENTORY;
+           WHEN (FEED)           GO TO RANDOM_INTRANS;
+           WHEN (FEED+1000)      GO TO FEED_OBJECT;
+           WHEN (FILL)           GO TO FILL_OBJECT;
+           WHEN (FILL+1000)      GO TO FILL_OBJECT;
+           WHEN (BLAST)          GO TO BLAST_OFF;
+           WHEN (BLAST+1000)     GO TO BLAST_OFF;
+           WHEN (SCORE)          GO TO ASK_SCORE;
+           WHEN (SCORE+1000)     GO TO ASK_SCORE;
+           WHEN (FOO)            GO TO FEE_FIE_ETC;
+           WHEN (FOO+1000)       GO TO RETURN_SPK;
+           WHEN (BRIEF)          GO TO BE_BRIEF;
+           WHEN (BRIEF+1000)     GO TO BE_BRIEF;
+           WHEN (READ)           GO TO READ_WHATEVER;
+           WHEN (READ+1000)      GO TO READ_OBJECT;
+           WHEN (BREAK)          GO TO RANDOM_INTRANS;
+           WHEN (BREAK+1000)     GO TO BREAK_OBJECT;
+           WHEN (WAKE)           GO TO RANDOM_INTRANS;
+           WHEN (WAKE+1000)      GO TO WAKE_UP;
+           WHEN (SUSPEND)        GO TO SUSPEND_GAME;
+           WHEN (SUSPEND+1000)   GO TO RETURN_SPK;
+           WHEN (HOURS)          GO TO REPORT_HOURS;
+           WHEN (HOURS+1000)     GO TO RETURN_SPK;
+           WHEN (LOGON)          GO TO TOGGLE_LOG;
+           WHEN (LOGON+1000)     GO TO RETURN_SPK;
+           WHEN (MURDOC)         GO TO MOLES_NAME;
+           WHEN (MURDOC+1000)    GO TO RETURN_SPK;
+           WHEN (WINDY)          GO TO WIND_INCANTATION;
+           WHEN (WINDY+1000)     GO TO RETURN_SPK;
+           WHEN (GREEK)          GO TO GREEK_INCANTATION;
+           WHEN (GREEK+1000)     GO TO RETURN_SPK;
+           WHEN (SPELL)          GO TO WIZARDS_SPELL;
+           WHEN (SPELL+1000)     GO TO RETURN_SPK;
+           WHEN (SHORTCUT)       GO TO LETS_CHEAT;
+           WHEN (SHORTCUT+1000)  GO TO RETURN_SPK;
+           WHEN (ASSEMBLE)       GO TO RANDOM_INTRANS;
+           WHEN (ASSEMBLE+1000)  GO TO CONSTRUCTION;
+           WHEN (KISS)           GO TO RETURN_SPK;
+           WHEN (KISS+1000)      GO TO KISS_MY_GRITS;
+           WHEN (DIG)            GO TO DIG_HOLE;
+           WHEN (DIG+1000)       GO TO DIG_HOLE;
+           WHEN (TERMINATE)      CALL BUG(69);
+           WHEN (TERMINATE+1000) GO TO RETURN_SPK;
+           WHEN (SNAPSHOT)       GO TO SNAP_SHOT;
+           WHEN (SNAPSHOT+1000)  GO TO RETURN_SPK;
+           OTHERWISE             CALL BUG(23);
+        END;
+
+/*
+   ROUTINES FOR PERFORMING THE VARIOUS ACTION VERBS.
+
+   MANY INTRANSITIVE VERBS USE THE TRANSITIVE CODE, AND
+   SOME VERBS USE CODE FOR OTHER VERBS, AS NOTED BELOW.
+
+   RANDOM INTRANSITIVE VERBS COME HERE. CLEAR OBJ JUST
+   IN CASE (SEE "ATTACK").
+*/
+RANDOM_INTRANS:
+        CALL LINESKP;
+        CALL COMBINE_WORDS(WORD(1),WORDX(1));
+        PUT STRING (OUTSTR) EDIT
+             (TKWORD,' what?') (2 A);
+        CALL LINEOUT;
+        OBJ = 0;
+        GO TO RETURN_RETRY;
+
+/*
+   CARRY, NO OBJECT GIVEN YET. OK IF ONLY ONE OBJECT PRESENT.
+*/
+TAKE_WHATEVER:
+        IF ATLOC(LOC) = 0 | LINK(ATLOC(LOC)) != 0 THEN
+           GO TO RANDOM_INTRANS;
+        DO I = 1 TO DWARF_NUM;
+           IF DLOC(I) = LOC & DFLAG >= 2 THEN
+              GO TO RANDOM_INTRANS;
+        END;
+        OBJ = ATLOC(LOC);
+
+/*
+   CARRY AN OBJECT. SPECIAL CASES FOR BIRD AND CAGE (IF 
+   BIRD IN CAGE, CAN'T TAKE ONE WITHOUT THE OTHER). ALSO
+   ERMINE. LIQUIDS ALSO SPECIAL, SINCE THEY DEPEND ON STATUS
+   OF BOTTLE. ALSO VARIOUS SIDE EFFECTS, ETC.
+*/
+TAKE_OBJECT:
+        IF OBJ = ALL THEN
+           DO;
+              ALL_FLAG = TRUE;
+              SPK = 212;
+              IF ATLOC(LOC) = 0 THEN GO TO RETURN_SPK;
+              OBJ = ATLOC(LOC);
+              IF LOC = NE_REPOSITORY | LOC = SW_REPOSITORY THEN
+                 DO;
+                    SPK = 25; /* YOU CAN'T BE SERIOUS */
+                    GO TO RETURN_SPK;
+                 END;
+           END;
+        ELSE ALL_FLAG = FALSE;
+
+CARRY_LOOP:
+        IF TOTING(OBJ) THEN GO TO RETURN_SPK;
+        SPK = 25; /* YOU CAN'T BE SERIOUS */
+        IF OBJ = PLANT & PROP(PLANT) <= 0 THEN SPK = 115;
+        IF OBJ = BEAR & PROP(BEAR) = 1 THEN SPK = 169;
+        IF OBJ = CHAIN & PROP(BEAR) != 0 THEN SPK = 170;
+        IF OBJ = FROG THEN 
+           DO;
+              PROP(FROG) = 0;
+              SPK = 146;
+           END;
+
+        IF FIXED(OBJ) != 0 THEN GO TO CARRY_NEXT;
+
+        IF OBJ = WATER | OBJ = OIL THEN 
+           DO;
+              IF HERE(BOTTLE) & LIQ = OBJ THEN
+                 OBJ = BOTTLE;
+              ELSE
+                 DO;
+                    OBJ = BOTTLE;
+                    IF TOTING(BOTTLE) & PROP(BOTTLE) = 1 THEN
+                       GO TO FILL_OBJECT;
+                    IF PROP(BOTTLE) != 1 THEN SPK = 105;
+                    IF !TOTING(BOTTLE) THEN SPK = 104;
+                    GO TO CARRY_NEXT;
+                 END;
+           END;
+
+        IF OBJ = HERB & DLOC(TRUCK_NUM) = LOC THEN
+           DO;
+              DLOC(TRUCK_NUM) = 0;
+              SPK = 244;
+              HOLDMAX = 11;
+              GO TO RETURN_SPK;
+           END;
+
+        IF OBJ = STAFF & PROP(STAFF) = 3 THEN
+           DO;
+              IF !TOTING(ROD) THEN 
+                 DO;
+                    SPK = 288;  /* CAN'T CATCH IT */
+                    IS_HURT = TRUE;
+                    GO TO CARRY_NEXT;
+                 END;
+           END;
+
+        IF HOLDING >= HOLDMAX THEN 
+           DO;
+              SPK = 92; /* CAN'T CARRY ANY MORE */
+              GO TO RETURN_SPK;
+           END;
+
+        IF OBJ = BIRD & PROP(BIRD) = 0 THEN
+           DO;
+              IF TOTING(ROD) THEN
+                 DO;
+                    SPK = 26; /* CAN'T CATCH IT */
+                    GO TO CARRY_NEXT;
+                 END;
+              IF !TOTING(CAGE) THEN
+                 DO;
+                    SPK = 27; /* CAN'T CARRY IT */
+                    GO TO CARRY_NEXT;
+                 END;
+              IF PROP(ERMINE) > 0 THEN 
+                 DO;
+                    SPK = 218;  /* NO ROOM */
+                    GO TO CARRY_NEXT;
+                 END;
+              PROP(BIRD) = 1;
+           END;
+
+        IF OBJ = ERMINE & PROP(ERMINE) = 0 THEN
+           DO;
+              IF !TOTING(CAGE) THEN
+                 DO;
+                    SPK = 219; /* CAN'T CARRY IT */
+                    GO TO CARRY_NEXT;
+                 END;
+              IF PROP(BIRD) != 0 THEN
+                 DO;
+                    SPK = 218; /* NO ROOM */
+                    GO TO CARRY_NEXT;
+                 END;
+              PROP(ERMINE) = 1;
+           END;
+
+        IF (OBJ = BIRD | OBJ = CAGE) & PROP(BIRD) > 0 THEN
+           CALL CARRY(BIRD+CAGE-OBJ,LOC);
+
+        IF (OBJ = ERMINE| OBJ = CAGE) & PROP(ERMINE) > 0 THEN
+           CALL CARRY(ERMINE+CAGE-OBJ,LOC);
+
+        IF OBJ = ROPE THEN PROP(ROPE) = 0;
+
+        CALL CARRY(OBJ,LOC);
+
+        IF TOTING(STAFF) & PROP(STAFF) = 3 THEN PROP(STAFF) = 0;
+
+        SPK = SPK_OK;
+
+        K = LIQ;
+        IF OBJ = BOTTLE & K != 0 THEN PLACE(K) = -1;
+
+CARRY_NEXT:
+        IF ALL_FLAG THEN
+           DO;
+              OBJ = LINK(OBJ);
+              IF OBJ > 0 THEN GO TO CARRY_LOOP;
+              ALL_FLAG = FALSE;
+              SPK = SPK_OK;
+           END;
+
+        GO TO RETURN_SPK;
+
+/*
+   DROP OBJECT. "THROW" ALSO COMES HERE FOR MOST OBJECTS.
+   SPECIAL CASES FOR BIRD (MIGHT ATTACK SNAKE OR DRAGON)
+   AND CAGE (MIGHT CONTAIN BIRD) AND VASE. DROP COINS AT
+   VENDING MACHINE FOR EXTRA BATTERIES.
+*/
+DISCARD_OBJECT:
+        ALL_FLAG = FALSE;
+        IF OBJ != ALL THEN GO TO DISCARD_DECODE;
+        ALL_FLAG = TRUE;
+        I = OBJ_MAX + 1;
+
+DISCARD_NEXT:
+        I = I - 1;
+        IF I = 0 THEN
+           DO;
+              ALL_FLAG = FALSE;
+              GO TO RETURN_OK;
+           END;
+        IF !TOTING(I) THEN GO TO DISCARD_NEXT;
+        IF (I = ERMINE) | (I = BIRD) THEN
+           OBJ = CAGE;
+        ELSE
+           OBJ = I;
+
+DISCARD_DECODE:
+        IF TOTING(ROD2) & OBJ = ROD & !TOTING(ROD) THEN
+           OBJ = ROD2;
+        IF !TOTING(OBJ) THEN GO TO RETURN_SPK;
+
+        IF OBJ = BIRD & HERE(SNAKE) THEN
+           DO;
+              CALL RSPEAK(30);
+              IF CAVE_CLOSED THEN GO TO DISTURB_DWARVES;
+              CALL DESTROY(SNAKE);
+              CALL DROPIT(BIRD,LOC);
+              PROP(BIRD) = 0;
+              PROP(SNAKE) = 1;
+              IF ALL_FLAG THEN
+                 GO TO DISCARD_NEXT;
+              ELSE
+                 GO TO RETURN_INPUT;
+           END;
+
+        IF (OBJ = COINS | OBJ = DOUBLOONS) & HERE(VEND) THEN
+           DO;
+              CALL DESTROY(OBJ);
+              CALL DROPIT(BATTERY,LOC);
+              CALL PSPEAK(BATTERY,0);
+              IF ALL_FLAG THEN
+                 GO TO DISCARD_NEXT;
+              ELSE
+                 GO TO RETURN_INPUT;
+           END;
+
+        IF OBJ = BIRD & ( ( AT(DRAGON) & PROP(DRAGON) = 0 )
+                         | (DLOC(DRAGON_NUM) = LOC) ) THEN
+           DO;
+              CALL RSPEAK(154);
+              CALL DESTROY(BIRD);
+              PROP(BIRD) = 0;
+              IF PLACE(SNAKE) = PLAC(SNAKE) THEN
+                 TREASURE_LOST = TREASURE_LOST + 1;
+              IF ALL_FLAG THEN
+                 GO TO DISCARD_NEXT;
+              ELSE
+                 GO TO RETURN_INPUT;
+           END;
+
+        IF OBJ = BEAR & AT(TROLL) THEN
+           DO;
+              CALL RSPEAK(163);
+              CALL MOVE(TROLL,0);
+              CALL MOVE(TROLL+OBJ_MAX,0);
+              CALL MOVE(TROLL2,PLAC(TROLL));
+              CALL MOVE(TROLL2+OBJ_MAX,FIXD(TROLL));
+              CALL JUGGLE(CHASM);
+              PROP(TROLL) = 2;
+              CALL DROPIT(BEAR,LOC);
+              IF ALL_FLAG THEN
+                 GO TO DISCARD_NEXT;
+              ELSE
+                 GO TO RETURN_INPUT;
+           END;
+
+        IF OBJ = VASE & LOC != PLAC(PILLOW) THEN
+           DO;
+              PROP(VASE) = 2;
+              IF AT(PILLOW) THEN PROP(VASE) = 0;
+              CALL PSPEAK(VASE,PROP(VASE)+1);
+              CALL DROPIT(VASE,LOC);
+              IF ALL_FLAG THEN
+                 GO TO DISCARD_NEXT;
+              ELSE
+                 GO TO RETURN_INPUT;
+           END;
+
+        IF OBJ = CHALICE & LOC != PLAC(PILLOW) THEN
+           DO;
+              PROP(CHALICE) = 3;
+              IF AT(PILLOW) THEN PROP(CHALICE) = 0;
+              IF PROP(CHALICE) != 0 THEN
+                 DO;
+                    FIXED(CHALICE) = -1;
+                    CALL PSPEAK(CHALICE,4);
+                 END;
+              CALL DROPIT(CHALICE,LOC);
+              IF ALL_FLAG THEN
+                 GO TO DISCARD_NEXT;
+              ELSE
+                 GO TO RETURN_INPUT;
+           END;
+
+        IF OBJ = BAR THEN
+           DO;
+              PROP(BAR) = 0;
+              CALL DROPIT(BAR,LOC);
+              IF LOC != IN_BUILDING THEN
+                 DO;
+                    SPK = 308;
+                    GO TO RETURN_HURT;
+                 END;
+              PROP(BAR) = 1;
+              CALL PSPEAK(BAR,1);
+              IF ALL_FLAG THEN
+                 GO TO DISCARD_NEXT;
+              ELSE
+                 GO TO RETURN_INPUT;
+           END;
+        ELSE
+           IF !ALL_FLAG THEN
+              SPK = SPK_OK;
+
+        K = LIQ;
+        IF K = OBJ THEN
+           OBJ = BOTTLE;
+        IF OBJ = BOTTLE & K != 0 THEN
+           PLACE(K) = 0;
+
+        IF OBJ = CAGE & PROP(BIRD) > 0 THEN
+           CALL DROPIT(BIRD,LOC);
+        IF OBJ = BIRD THEN
+           PROP(BIRD) = 0;
+
+        IF OBJ = CAGE & PROP(ERMINE) > 0 THEN
+           CALL DROPIT(ERMINE,LOC);
+        IF OBJ = ERMINE THEN
+           PROP(ERMINE) = 0;
+
+        CALL DROPIT(OBJ,LOC);
+
+        IF ALL_FLAG THEN
+           GO TO DISCARD_NEXT;
+        ELSE
+           GO TO RETURN_SPK;
+
+/*
+   SAY. ECHO WORD(2) (OR WORD(1) IF NO WORD(2) (SAY WHAT?, ETC.)
+   MAGIC WORDS OVERRIDE.
+*/
+SAY_WHAT:
+        IF WORD(2) = ' ' THEN
+           CALL COMBINE_WORDS(WORD(1),WORDX(1));
+        ELSE
+           CALL COMBINE_WORDS(WORD(2),WORDX(2));
+        IF WORD(2) != ' ' THEN
+           WORD(1) = WORD(2);
+        I = VOCAB(WORD(1),-1);
+        DO J = 1 TO 20;
+           IF I = MAGIC_WORDS(J) THEN
+              GO TO SAY_MAGIC;
+        END;
+
+        CALL LINESKP;
+        PUT STRING (OUTSTR) EDIT
+               ('Okay, "',TKWORD,'".') (3 A);
+        CALL LINEOUT;
+        GO TO RETURN_INPUT;
+
+SAY_MAGIC:
+        WORD(2) = ' ';
+        OBJ = 0;
+        GO TO RETURN_DECODE;
+
+/*
+   LOCK, UNLOCK, NO OBJECT GIVEN. ASSUME VARIOUS THINGS IF PRESENT.
+*/
+OPEN_WHATEVER:
+        SPK = 28;
+        IF HERE(CLAM) THEN OBJ = CLAM;
+        IF HERE(OYSTER) THEN OBJ = OYSTER;
+        IF AT(DOOR) THEN OBJ = DOOR;
+        IF AT(GRATE) THEN OBJ = GRATE;
+
+        IF OBJ != 0 & HERE(CHAIN) THEN GO TO RANDOM_INTRANS;
+        IF HERE(CHAIN) THEN OBJ = CHAIN;
+        IF OBJ = 0 THEN GO TO RETURN_SPK;
+
+/*
+   LOCK, UNLOCK OBJECT. SPECIAL STUFF FOR OPENING
+   CLAM/OYSTER AND FOR CHAIN.
+*/
+OPEN_CLOSE:
+        IF OBJ = CLAM | OBJ = OYSTER THEN GO TO OPEN_OYSTER;
+        IF OBJ = DOOR THEN GO TO OPEN_DOOR;
+        IF OBJ = CAGE THEN SPK = 32;
+        IF OBJ = KEYS THEN SPK = 55;
+        IF OBJ = GRATE | OBJ = CHAIN THEN SPK = 31;
+
+        IF SPK != 31 | !HERE(KEYS) THEN GO TO RETURN_SPK;
+        IF OBJ = CHAIN THEN GO TO OPEN_CHAIN;
+        IF !CAVE_CLOSING THEN GO TO OPEN_GRATE;
+        SPK = 130;
+        IF !HAS_PANICKED THEN CLOCK2 = 15;
+        HAS_PANICKED = TRUE;
+        GO TO RETURN_SPK;
+
+OPEN_GRATE:
+        SPK = 34 + PROP(GRATE);
+        PROP(GRATE) = 1;
+        IF VERB = LOCK THEN PROP(GRATE) = 0;
+        SPK = SPK + 2*PROP(GRATE);
+        GO TO RETURN_SPK;
+
+/* RUSTY DOOR */
+OPEN_DOOR:
+        IF VERB = LOCK THEN GO TO LOCK_DOOR;
+        SPK = 111;
+        IF PROP(DOOR) = 1 THEN
+           DO;
+              PROP(DOOR) = 2;
+              GO TO RETURN_OK;
+           END;
+        IF PROP(DOOR) = 2 THEN SPK = 256;
+        GO TO RETURN_SPK;
+
+LOCK_DOOR:
+        SPK = 257;
+        IF PROP(DOOR) = 1 THEN GO TO RETURN_SPK;
+        SPK = 258;
+        IF PROP(DOOR) = 0 THEN GO TO RETURN_SPK;
+        PROP(DOOR) = 1;
+        GO TO RETURN_OK;
+
+/* CLAM/OYSTER */
+OPEN_OYSTER:
+        K = 0;
+        IF OBJ = OYSTER THEN K = 1;
+        SPK = 124 + K;
+        IF TOTING(OBJ) THEN SPK = 120 + K;
+        IF !TOTING(TRIDENT) THEN SPK = 122 + K;
+        IF VERB = LOCK THEN SPK = 61;
+        IF SPK != 124 THEN GO TO RETURN_SPK;
+
+        CALL DESTROY(CLAM);
+        CALL DROPIT(OYSTER,LOC);
+        CALL DROPIT(PEARL, 105);
+        GO TO RETURN_SPK;
+
+/* CHAIN */
+OPEN_CHAIN:
+        IF VERB = LOCK THEN GO TO LOCK_CHAIN;
+        SPK = 171;
+        IF PROP(BEAR) = 0 THEN SPK = 41;
+        IF PROP(CHAIN) = 0 THEN SPK = 37;
+        IF SPK != 171 THEN GO TO RETURN_SPK;
+
+        PROP(CHAIN) = 0;
+        FIXED(CHAIN) = 0;
+        IF PROP(BEAR) != 3 THEN PROP(BEAR) = 2;
+        FIXED(BEAR) = 2 - PROP(BEAR);
+        GO TO RETURN_SPK;
+
+LOCK_CHAIN:
+        SPK = 172;
+        IF PROP(CHAIN) != 0 THEN SPK = 34;
+        IF LOC != PLAC(CHAIN) THEN SPK = 173;
+        IF SPK != 172 THEN GO TO RETURN_SPK;
+
+        PROP(CHAIN) = 2;
+        IF TOTING(CHAIN) THEN CALL DROPIT(CHAIN,LOC);
+        FIXED(CHAIN) = -1;
+        GO TO RETURN_SPK;
+ 
+/*
+   LIGHT LAMP
+*/
+LAMP_ON:
+        IF !HERE(LAMP) THEN GO TO RETURN_SPK;
+        SPK = 184;
+        IF LAMP_LIFE < 0 THEN GO TO RETURN_SPK;
+        PROP(LAMP) = 1;
+        CALL RSPEAK(39);
+        IF !WAS_DARK THEN GO TO RETURN_INPUT;
+        NEWLOC = LOC;
+        GO TO RETURN_MOVE;
+
+/*
+   LAMP OFF
+*/
+LAMP_OFF:
+        IF !HERE(LAMP) THEN GO TO RETURN_SPK;
+        PROP(LAMP) = 0;
+        CALL RSPEAK(40);
+        IF DARK THEN CALL RSPEAK(16);
+        GO TO RETURN_INPUT;
+
+/*
+   WAVE. NO EFFECT UNLESS WAVING ROD AT FISSURE.
+*/
+WAVE_FLAG:
+        IF (!TOTING(OBJ) & (OBJ != ROD | !TOTING(ROD2)) THEN
+           SPK = 29;
+        IF OBJ != ROD | !AT(FISSURE) | !TOTING(OBJ)
+           | CAVE_CLOSING THEN GO TO RETURN_SPK;
+        PROP(FISSURE) = 1 - PROP(FISSURE);
+        CALL PSPEAK(FISSURE,2-PROP(FISSURE));
+        GO TO RETURN_INPUT;
+
+/*
+   FOLLOW. (WALK) - SPECIAL CASE OF FOLLOWING THE GIANT MOLE.
+   LEADS TO A NEW ROOM!
+*/
+FOLLOW_MOLE:
+        IF DLOC(MURDOC_NUM) != LOC | !MURDOC_ED THEN
+           GO TO RANDOM_INTRANS;
+        CALL RSPEAK(248);
+        NEWLOC = MOLES_HOME;
+        OLDLOC = NEWLOC;  /* PREVENT BACK-TRACKING */
+        DLOC(MURDOC_NUM) = 0;
+        GO TO RETURN_MOVE;
+
+/*
+   ATTACK.  ASSUME TARGET IF UNAMBIGUOUS. "THROW" ALSO
+   LINKS HERE. ATTACKABLE OBJECTS FALL INTO TWO CATEGORIES:
+   ENEMIES (SNAKE, DWARF, ETC.) AND OTHERS (BIRD, CLAM).
+   AMBIGUOUS IF TWO ENEMIES, OR IF NO ENEMIES BUT TWO OTHERS.
+*/
+ATTACK_OBJECT:
+        DO I = 1 TO DWARF_NUM;
+           IF DLOC(I) = LOC & DFLAG >= 2 & OBJ = 0 THEN
+              OBJ = DWARF;
+        END;
+
+        IF OBJ = 0 THEN
+           DO;
+              IF HERE(SNAKE) THEN OBJ = OBJ*OBJ_MAX + SNAKE;
+              IF ( AT(DRAGON) & PROP(DRAGON) = 0 )
+                 | ( DLOC(DRAGON_NUM) - LOC ) THEN
+                 OBJ = OBJ*OBJ_MAX + DRAGON;
+              IF AT(TROLL) THEN OBJ = OBJ*OBJ_MAX + TROLL;
+              IF HERE(BEAR) & PROP(BEAR) = 0 THEN
+                 OBJ = OBJ*OBJ_MAX + BEAR;
+              IF OBJ > OBJ_MAX THEN GO TO RANDOM_INTRANS;
+ 
+              IF OBJ = 0 THEN
+                 DO;
+/*
+   CAN'T ATTACK BIRD BY THROWING AXE.
+   CLAM AND OYSTER BOTH TREATED AS CLAM FOR 
+   INTRANSITIVE CASE. NO HARM DONE.
+*/
+                    IF HERE(BIRD) & VERB != THROW THEN
+                       OBJ = BIRD;
+                    IF HERE(CLAM) | HERE(OYSTER) THEN
+                       OBJ = OBJ*OBJ_MAX + CLAM;
+                    IF DLOC(NOSTRIL_NUM) = LOC THEN
+                       OBJ = OBJ*OBJ_MAX + MONSTER;
+                    IF OBJ > OBJ_MAX THEN GO TO RANDOM_INTRANS;
+                 END;
+           END;
+
+        IF OBJ = BIRD THEN
+           DO;
+              SPK = 137; /* LEAVE HIM ALONE! */
+              IF CAVE_CLOSED THEN
+                 GO TO RETURN_SPK;
+              CALL DESTROY(BIRD);
+              PROP(BIRD) = 0;
+              IF PLACE(SNAKE) = PLAC(SNAKE) THEN
+                 TREASURE_LOST = TREASURE_LOST + 1;
+              SPK = 45;
+           END;
+
+        IF OBJ = 0 THEN SPK = 44; /* NOTHING HERE TO ATTACK! */
+
+        IF OBJ = CLAM | OBJ = OYSTER THEN
+           SPK = 150;
+        IF OBJ = DWARF | OBJ = MONSTER THEN
+           SPK = 49; /* WITH WHAT, BARE HANDS? */
+        IF OBJ = DWARF & CAVE_CLOSED THEN
+           GO TO DISTURB_DWARVES;
+        IF OBJ = DRAGON THEN
+           SPK = 167; /* ALREADY DEAD */
+        IF OBJ = TROLL THEN
+           SPK = 157; /* TROLLS ARE LIKE ROCKS */
+        IF OBJ = BEAR THEN
+           SPK = 165 + (PROP(BEAR)+1)/2; /* CONFUSED */
+        IF OBJ = SNAKE THEN
+           DO;
+             SPK = 46; /* GOT BITTEN BY THE SNAKE */
+             IS_HURT = TRUE;
+           END;
+        IF OBJ = KAZAK THEN
+           DO;
+              SPK = 222; /* ATTACKING KAZAK IS SILLY */
+              IS_HURT = TRUE;
+           END;
+        IF OBJ = DRAGON THEN
+           DO;
+              IF PROP(DRAGON) = 0 THEN /* DRAGON ON RUG */
+                 DO;
+/* FUN STUFF FOR DRAGON. IF HE INSISTS ON ATTACKING IT,
+   WIN! SET PROP TO DEAD, MOVE DRAGON TO CENTRAL LOC (STILL
+   FIXED), MOVE RUG THERE (NOT FIXED), AND MOVE HIM THERE,
+   TOO. THEN DO A NULL MOTION TO GET NEW DESCRIPTION.
+*/
+                    IF !YES(49,0,SPK_OK) THEN GO TO RETURN_INPUT;
+
+                    CALL DROPIT(SWORD,CENTER_WIDE_ROOM);
+                    DLOC(DRAGON_NUM) = CROSSOVER_N_S_E_W;
+                    CALL PSPEAK(DRAGON,1);
+                    PROP(DRAGON) = 2;
+                    PROP(RUG) = 0;
+
+                    K = (PLAC(DRAGON)+FIXD(DRAGON))/2;
+                    CALL MOVE(DRAGON+OBJ_MAX,-1);
+                    CALL MOVE(RUG+OBJ_MAX,0);
+                    CALL MOVE(DRAGON,K);
+                    CALL MOVE(RUG,K);
+
+                    DO OBJ = 1 TO OBJ_MAX;
+                       IF PLACE(OBJ) = PLAC(DRAGON) 
+                        | PLACE(OBJ) = FIXED(DRAGON) THEN
+                          CALL MOVE(OBJ,K);
+                    END;
+                    LOC = K;
+                    NEWLOC = LOC;
+                    GO TO RETURN_MOVE;
+                 END; /* PROP(DRAGON) = 0 */
+        ELSE
+/*
+   THE WANDERING DRAGON. IF HE HAS THE SWORD, HE HAS A
+   CHANCE OF KILLING HIM THE FIRST TIME, OR GETTING HURT.
+*/
+           IF DLOC(DRAGON_NUM) = LOC THEN /* HE'S ALIVE */
+              DO;
+                 IF TOTING(SWORD) THEN
+                    IF PERCENT(80) THEN
+                       DO;
+                          DLOC(DRAGON_NUM) = 0;
+                          KILL_DRAGON = TRUE;
+                          SPK = 228; /* YOU KILLED THE DRAGON */
+                       END;
+                    ELSE
+                       DO;
+                          SPK = 231; /* WOUNDED YOU AND HIM */
+                          IS_HURT = TRUE;
+                       END;
+                 ELSE
+                    DO;
+                       SPK = 313;
+                       IS_HURT = TRUE;
+                    END;
+              END;
+           ELSE
+              SPK = 44; /* NOTHING HERE TO ATTACK! */
+
+        GO TO RETURN_SPK;
+
+/*
+   POUR.  IF NO OBJECT, OR OBJECT IS BOTTLE, ASSUME CONTENTS
+   OF BOTTLE.  SPECIAL TESTS FOR POURING WATER OR OIL ON
+   PLANT OR RUSTY DOOR.
+*/
+POUR_LIQUID:
+        IF OBJ = BOTTLE | OBJ = 0 THEN
+           OBJ = LIQ;
+        IF OBJ = 0 THEN
+           GO TO RANDOM_INTRANS; /* POUR WHAT? */
+        IF !TOTING(OBJ) THEN
+           GO TO RETURN_SPK;
+
+        SPK = 78;
+        IF OBJ != OIL & OBJ != WATER THEN
+           GO TO RETURN_SPK;
+        PROP(BOTTLE) = 1;
+        PLACE(OBJ) = 0;
+
+        SPK = 77;
+        IF !(AT(PLANT) | AT(DOOR)) THEN
+           GO TO RETURN_SPK;
+
+        IF AT(DOOR) THEN
+           GO TO OIL_DOOR;
+        SPK = 112;
+        IF OBJ != WATER THEN
+           GO TO RETURN_SPK;
+
+        CALL PSPEAK(PLANT,PROP(PLANT)+1);
+        PROP(PLANT) = MOD(PROP(PLANT)+2,6);
+        PROP(PLANT2) = PROP(PLANT)/2;
+        NEWLOC = LOC;
+        GO TO RETURN_MOVE;
+
+OIL_DOOR:
+        PROP(DOOR) = 0;
+        IF OBJ = OIL THEN
+           PROP(DOOR) = 1;
+        SPK = 113 + PROP(DOOR);
+        GO TO RETURN_SPK;
+
+/*
+   EAT.  INTRANSITIVE: ASSUME FOOD IF PRESENT, ELSE ASK
+   WHAT. TRANSITIVE: FOOD OK, SOME THINGS LOSE APPETITE,
+   REST ARE RIDICULOUS.
+*/
+EAT_WHATEVER:
+        IF (!HERE(FOOD) & !HERE(SPROUTS))
+         | (HERE(FOOD) & HERE(SPROUTS)) THEN
+          GO TO RANDOM_INTRANS;
+        IF HERE(FOOD) THEN 
+          OBJ = FOOD;
+        ELSE
+          OBJ = SPROUTS;
+
+EAT_IT_UP:
+        CALL DESTROY(OBJ);
+        SPK = 72;
+        GO TO RETURN_SPK;
+
+EAT_OBJECT:
+        IF OBJ = FOOD | OBJ = SPROUTS THEN
+           GO TO EAT_IT_UP;
+
+        IF OBJ = BIRD | OBJ = SNAKE | OBJ = CLAM | OBJ = OYSTER
+         | OBJ = DWARF | OBJ = DRAGON | OBJ = TROLL
+         | OBJ = BEAR | OBJ = ERMINE THEN
+          SPK = 71;
+        GOTO RETURN_SPK;
+
+/*
+   DRINK. IF NO OBJECT, ASSUME WATER AND LOOK FOR IT HERE.
+   IF WATER IS IN THE BOTTLE, DRINK THAT, ELSE MUST BE AT A
+   WATER LOC, SO DRINK STREAM.
+*/
+DRINK_LIQUID:
+        IF OBJ = 0 & LIQLOC(LOC) != WATER
+         & (LIQ != WATER | !HERE(BOTLE)) THEN
+           GO TO RANDOM_INTRANS;
+        IF OBJ != 0 & OBJ != WATER THEN
+           SPK = 110;
+        IF SPK = 110 | LIQ ! WATER | !HERE(BOTTLE) THEN
+           GO TO RETURN_SPK;
+
+        PROP(BOTTLE) = 1;
+        PLACE(WATER) = 0;
+        SPK = 74;
+        GO TO RETURN_SPK;
+
+/*
+   RUB. YIELDS VARIOUS SNIDE REMARKS.
+   CAN BE VERY REWARDING IN A CERTAIN CASE.
+*/
+RUB_A_DUB_DUB:
+        IF OBJ = RING THEN
+           DO;
+              CALL RSPEAK(294);
+              RUBBED_RING = TRUE;
+              GO TO RETURN_END;
+           END;
+ 
+       IF OBJ != LAMP THEN
+           SPK = 76;
+ 
+       GO TO RETURN_SPK;
+
+/*
+   THROW. SAME AS DROP UNLESS AXE. THEN SAME AS ATTACK EXCEPT
+   IGNORE BIRD, AND IF DWARF IS PRESENT THE ONE MIGHT BE KILLED.
+   (ONLY WAY TO DO SO!) AXE ALSO SPECIAL FOR DRAGON, BEAR, TROLL,
+   AND MONSTER, TREASURES SPECIAL FOR TROLL.
+*/
+THROW_OBJECT:
+        IF TOTING(ROD2) & OBJ = ROD & !TOTING(ROD) THEN
+           OBJ = ROD2;
+        IF !TOTING(OBJ) THEN
+           GO TO RETURN_SPK;
+
+        IF OBJ >= MINTRS & OBJ <= MAXTRS & AT(TROLL) THEN
+           DO; /* SNARF A TREASURE FOR THE TROLL */
+              SPK = 159;
+              CALL DROPIT(OBJ,0);
+              CALL MOVE(TROLL,0);
+              CALL MOVE(TROLL+OBJ_MAX,0);
+              CALL DROPIT(TROLL2,PLAC(TROLL));
+              CALL DROPIT(TROLL2+OBJ_MAX,FIXD(TROLL));
+              CALL JUGGLE(CHASM);
+              GO TO RETURN_SPK;
+           END;
+
+        IF OBJ = FOOD & HERE(BEAR) THEN
+           DO; /* THROWING FOOD IS QUITE A STORY */
+              OBJ = BEAR;
+              DLOC(NOSTRIL_NUM) = EAST_PIT;
+              GO TO FEED_OBJECT;
+           END;
+
+        IF OBJ = SPICES THEN
+           IF DLOC(NOSTRIL_NUM) = LOC THEN
+              DO;
+                 CALL RSPEAK(229);
+                 DLOC(NOSTRIL_NUM) = 0;
+                 KILL_NOSTRIL = TRUE;
+                 CALL DROPIT(SPICES,LOC);
+                 FIXED(SPICES) = -1;
+                 PROP(SPICES) = 1;
+                 NEWLOC = LOC;
+                 GO TO RETURN_MOVE;
+              END;
+           ELSE
+              IF AT(TROLL) THEN /* THE TROLL IS ALLERGIC */
+                 DO;
+                    CALL RSPEAK(230);
+                    CALL MOVE(TROLL,0);
+                    CALL MOVE(TROLL+OBJ_MAX,0);
+                    CALL MOVE(TROLL2,PLAC(TROLL));
+                    CALL MOVE(TROLL2+OBJ_MAX,FIXD(TROLL));
+                    CALL JUGGLE(CHASM);
+                    PROP(TROLL) = 2;
+                    CALL DROPIT(SPICES,LOC);
+                    FIXED(SPICES) = -1;
+                    PROP(SPICES) = 1;
+                    NEWLOC = LOC;
+                    GO TO RETURN_MOVE;
+                 END;
+
+        IF OBJ = ROPE & AT(CREVASSE) THEN
+           PROP(ROPE) = 1;
+
+        IF OBJ != AXE THEN
+           GO TO DISCARD_OBJECT;
+ 
+        DO I = 1 TO DWARF_NUM;
+           /* NEEDN'T CHECK DFLAG IF AXE IS HERE */
+           IF DLOC(I) = LOC THEN
+              GO TO THROW_AT_DWARF;
+        END;
+  
+        SPK = 152;
+        IF AT(DRAGON) & PROP(DRAGON) = 0)
+         | (DLOC(DRAGON_NUM) = LOC) THEN
+           GO TO THROW_MISSES;
+
+        IF DLOC(NOSTRIL_NUM) = LOC THEN
+           DO;
+              CALL DESTROY(AXE); /* THE MONSTER INHALES IT */
+              CALL RSPEAK(234);
+              NEWLOC = LOC;
+              GO TO RETURN_MOVE;
+           END;
+
+        SPK = 158;
+        IF AT(TROLL) THEN
+           GO TO THROW_MISSES;
+
+        IF HERE(BEAR) & PROP(BEAR) = 0 THEN
+           DO; /* THIS'LL TEACH HIM TO THROW THE AXE AT THE BEAR! */
+              SPK = 164;
+              CALL DROPIT(AXE,LOC);
+              FIXED(AXE) = -1;
+              PROP(AXE) = 1;
+              CALL JUGGLE(BEAR);
+              GO TO RETURN_SPK;
+           END;
+
+        OBJ = 0;
+        GO TO ATTACK_OBJECT;
+
+THROW_AT_DWARF:
+        SPK = 48;
+        IF RAN(3) = 0 THEN
+           GO TO THROW_MISSES;
+        DSEEN(I) = FALSE;
+        DLOC(I) = 0;
+        SPK = 47;
+        DKILL = DKILL + 1;
+        IF DKILL = 1 THEN
+           SPK = 149;
+
+THROW_MISSES:
+        CALL RSPEAK(SPK);
+        CALL DROPIT(AXE,LOC);
+        NEWLOC = LOC;
+        GO TO RETURN_MOVE;
+
+/*
+   SCORE. CALL THE SCORING SUBROUTINE.
+   REPORT TO THE ADVENTURER HOW HE'S DOING.
+   ALSO GIVE ADDITIONAL INFORMATION ON THE TOTAL NUMBER
+   OF MOVES MADE AND THE REMAINING LIFE OF THE LAMP.
+   NOTE THAT THIS FALLS THROUGH TO THE QUIT ROUTINE.
+*/
+ASK_SCORE:
+        CALL SCORING(TRUE);
+
+        CALL LINESKP;
+        PUT STRING (OUTSTR) EDIT
+            ('If you were to quit now, you would score',
+            CUR_SCORE,' out of a possible',MAX_SCORE,'.')
+            (A,F(4),A,F(4),A);
+        CALL LINEOUT;
+
+        TKWORD = 's.';
+        IF TURNS = 1 THEN
+           TKWORD = '.';
+        PUT STRING (OUTSTR) EDIT
+            ('You have made ', TURNS, ' move', TKWORD)
+            (A,F(5),2 A);
+        CALL LINEOUT;
+
+        IF TOTING(LAMP) THEN
+           DO;
+              PUT STRING (OUTSTR) EDIT
+                  ('Your lamp has a remaining life of', LAMP_LIFE, '.')
+                  (A,F(5),A);
+              CALL LINEOUT;
+           END;
+
+/*
+   QUIT. INTRANSITIVE ONLY. VERIFY INTENT AND EXIT IF THAT'S
+   WHAT HE WANTS. SCORE ALSO ENDS UP HERE.
+*/
+WANNA_QUIT:
+        GAVE_UP = YES(SPK,SPK_OK,SPK_OK);
+        IF GAVE_UP THEN
+           GO TO RETURN_END;
+        GO TO RETURN_INPUT;
+
+/*
+   FIND. MIGHT BE CARRYING IT, OR IT MIGHT BE HERE. ELSE GIVE
+   CAVEAT.
+*/
+FIND_INVENTORY:
+        IF AT(OBJ) | (LIQ = OBJ & AT(BOTTLE))
+         | K = LIQLOC(LOC) THEN
+           SPK = 94;
+        DO I = 1 TO DWARF_NUM;
+           IF DLOC(I) = LOC & DFLAG>= 2 & OBJ = DWARF THEN
+              SPK = 94;
+        END;
+
+        IF CAVE_CLOSED THEN
+           SPK = 138;
+        IF TOTING(OBJ) THEN
+           SPK = 24;
+        GO TO RETURN_SPK;
+
+/*
+   INVENTORY. IF OBJECT, TREAT SAME AS FIND. ELSE REPORT
+   ON CURRENT BURDEN.
+*/
+TAKE_INVENTORY:
+        SPK = 98;
+
+        DO I = 1 TO OBJ_MAX;
+           IF I != BEAR & TOTING(I) THEN
+              DO;
+                 IF SPK = 98 THEN
+                    CALL RSPEAK(99);
+                 IF BLANK_LINE THEN
+                    DO;
+                       BLANK_LINE = FALSE;
+                       CALL PSPEAK(I,-1);
+                       BLANK_LINE = TRUE;
+                    END;
+                 ELSE
+                    CALL PSPEAK(I,-1);
+                 SPK = 0;
+              END;
+        END;
+
+        IF TOTING(BEAR) THEN
+           SPK = 141;
+        GO TO RETURN_SPK;
+/*
+   FEED. IF BIRD, NO SEED. SNAKE, DRAGON, TROLL: QUIP.
+   IF DWARF, MAKE HIM MAD. BEAR, SPECIAL.
+   IF ERMINE, IT'S ASLEEP WAKING IT TO FEED MAKES IT BITE!
+*/
+FEED_OBJECT:
+        IF OBJ = BIRD THEN
+           SPK = 100;  /* IT'S NOT HUNGRY */
+        ELSE IF OBJ = ERMINE THEN
+           DO;
+              SPK = 217; /* THE ERMINE IS SLEEPING */
+              IS_HURT = TRUE;
+           END;
+        ELSE IF OBJ = SNAKE | OBJ = DRAGON | OBJ = TROLL THEN
+           DO;
+              SPK = 102;
+              IF OBJ = DRAGON & PROP(DRAGON) != 0 THEN
+                 SPK = 110;
+              IF OBJ = TROLL THEN 
+                 SPK = 182;
+              IF OBJ != SNAKE | CAVE_CLOSED | !HERE(BIRD) THEN
+                 GO TO RETURN_SPK;
+              SPK = 101;
+              CALL DESTROY(BIRD);
+              PROP(BIRD) = 0;
+              IF PLACE(SNAKE) = PLAC(SNAKE) THEN
+                 TREASURE_LOST = TREASURE_LOST + 1;
+           END;
+        ELSE IF OBJ = DWARF THEN
+           DO;
+              IF HERE(FOOD) THEN
+                 DO;
+                    SPK = 103;
+                    DFLAG = DFLAG + 1;
+                 END;
+           END;
+        ELSE IF OBJ = BEAR THEN
+           DO;
+              IF PROP(BEAR) = 0 THEN
+                 SPK = 102;
+              IF PROP(BEAR) = 3 THEN
+                 SPK = 110;
+              IF HERE(FOOD) THEN
+                 DO;
+                    CALL DESTROY(FOOD);
+                    PROP(BEAR) = 1;
+                    FIXED(AXE) = 0;
+                    PROP(AXE) = 0;
+                    SPK = 168;
+                 END;
+           END;
+        ELSE IF OBJ = ELVES THEN
+           DO;
+              IF PROP(ELVES) = 0 THEN /* FIRST FEEDING */
+                 DO;
+                    IF HERE(SPROUTS) THEN
+                       DO;
+                          CALL MOVE(SPROUTS,GARDEN_ROOM);
+                          PROP(ELVES) = 1;
+                          SPK = 214;
+                          CALL DROPIT(ANIMAL,ELVES_PRISON);
+                       END;
+                    ELSE IF HERE(FOOD) THEN
+                       DO;
+                          CALL DESTROY(FOOD);
+                          PROP(ELVES) = 1;
+                          SPK = 214;
+                          CALL DROPIT(ANIMAL,ELVES_PRISON);
+                       END;
+                 END;
+              ELSE IF PROP(ELVES) = 1 THEN /* SECOND FEEDING */
+                 DO;
+                    IF HERE(SPROUTS) THEN
+                       DO;
+                          CALL DESTROY(SPROUTS);
+                          PROP(ELVES) = 2;
+                          SPK = 216;
+                          CALL DROPIT(CONCH,ELVES_PRISON);
+                       END;
+                    ELSE IF HERE(FOOD) THEN
+                       DO;
+                          CALL DESTROY(FOOD);
+                          PROP(ELVES) = 2;
+                          SPK = 216;
+                          CALL DROPIT(CONCH,ELVES_PRISION);
+                       END;
+                 END;
+              ELSE /* ELVES AREN'T HUNGRY */
+                 SPK = 215;
+           END;
+        ELSE
+           SPK = 14;
+
+        GO TO RETURN_SPK;
+
+/*
+   FILL. BOTTLE MUST BE EMPTY, AND SOME LIQUID AVAILABLE.
+   (VASE IS NASTY.)
+*/
+FILL_OBJECT:
+        IF OBJ = VASE THEN
+           GO TO FILL_VASE;
+        IF OBJ != 0 & OBJ != BOTTLE THEN
+           GO TO RETURN_SPK;
+        IF OBJ = 0 & !HERE(BOTTLE) THEN
+           GO TO RANDOM_INTRANS;
+
+        SPK = 107;
+        IF LIQLOC(LOC) = 0 THEN
+           SPK = 106;
+        IF LIQ != 0 THEN
+           SPK = 105;
+        IF SPK != 107 THEN
+           GO TO RETURN_SPK;
+
+        PROP(BOTTLE) = MOD(COND(LOC),4)/2;
+        PROP(BOTTLE) = PROP(BOTTLE)*2;
+        K = LIQ;
+        IF TOTING(BOTTLE) THEN 
+           PLACE(K) = -1;
+        IF K = OIL THEN
+           SPK = 100;
+        GO TO RETURN_SPK;
+
+FILL_VASE:
+        SPK = 29;
+        IF LIQLOC(LOC) = 0 THEN
+           SPK = 144;
+        IF LIQLOC(LOC) = 0 | !TOTING(VASE) THEN
+           GO TO RETURN_SPK;
+
+        CALL RSPEAK(145);
+        PROP(VASE) = 2;
+        FIXED(VASE) = -1;
+        CALL PSPEAK(VASE,3);
+        CALL DROPIT(VASE,LOC);
+        GO TO RETURN_INPUT;
+
+/*
+   BLAST. NO EFFECT UNLESS YOU'VE GOT DYNAMITE, WHICH IS A
+   NEAT TRICK!
+*/
+BLAST_OFF:
+        IF HERE(DYNAMITE) THEN
+           GO TO RETURN_DEAD;
+
+        IF PROP(ROD2) < 0 | !CAVECLOSED | PAST_CLOSING THEN
+           GO TO RETURN_SPK;
+
+        BONUS = 133;
+        IF LOC = NE_REPOSITORY THEN
+          BONUS = 134;
+        IF HERE(ROD2) THEN
+          BONUS = 135;
+
+        CALL RSPEAK(BONUS);
+
+        IF BONUS != 133 THEN
+           GO TO RETURN_END;
+
+        CALL LINESKP;
+        CALL RSPEAK(289);   /* AFTER THE PARTY ... */
+        CALL LINESKP;
+
+        LOC = PALACE_ELVEN_KING;
+        NEWLOC, OLDLOC = LOC;
+        PAST_CLOSING = TRUE;
+
+        PROP(FISSURE) = 1;
+        PROP(DRAWINGS) = 1;
+        PROP(PLANT) = 4;
+
+        PROP(BOTTLE) = 0;
+        CALL MOVE(BOTTLE,LOC);
+
+        PROP(LAMP) = 0;
+        CALL MOVE(LAMP,LOC);
+
+        CALL MOVE(RING2,EMPTY_ROOM);
+        CALL MOVE(RING3,NARROW_CURVING_EW_PASSAGE);
+        CALL MOVE(RING4,CLEAN_HARD_FLOOR);
+        GO TO RETURN_MOVE;
+
+/*
+   FEE FIE FOE FOO (AND FUM). ADVANCE TO NEXT STATE IF GIVEN
+   IN PROPER ORDER. LOOK UP WORD(1) IN SECTION 3 OF VOCAB TO
+   DETERMINE WHICH WORD WE'VE GOT. LAST WORD ZIPS THE EGGES
+   BACK TO THE GIANT ROOM (UNLESS ALREADY THERE).
+*/
+FIE_FIE_ETC:
+        K = VOCAB(WORD(1),3);
+        SPK = 42;
+        IF FOOBAR = 1 - K THEN 
+           GO TO FEE_FIE_OK;
+        IF FOOBAR != FEE - 1 THEN
+           SPK = 151;
+        GO TO RETURN_SPK;
+
+FEE_FIE_OK:
+        FOOBAR = K;
+        IF K != FEE + 3 THEN
+           GO TO RETURN_SPK;
+        FOOBAR = FEE - 1;
+        IF PLACE(EGGS) = PLAC(EGGS)
+         | (TOTING(EGGS) & LOC = PLAC(EGGS)) THEN
+           GO TO RETURN_SPK;
+
+/*
+   BRING BACK TROLL IF WE STEAL THE EGGS BACK FROM HIM
+   BEFORE CROSSING.
+*/
+        IF PLACE(EGGS) = 0 & PLACE(TROLL) = 0 & PROP(TROLL) = 0 THEN
+           PROP(TROLL) = 1;
+        K = 2;
+        IF HERE(EGGS) THEN
+           K = 1;
+        IF LOC = PLAC(EGGS) THEN
+           K = 0;
+        CALL MOVE(EGGS,PLAC(EGGS));
+        CALL PSPEAK(EGGS,K);
+        GO TO RETURN_INPUT;
+
+/*
+   THE WIND INCANTATION.
+*/
+WIND_INCANTATION:
+        K = VOCAB(WORD(1),3);
+        SPK = 42;
+        IF WIND_CANT = 1 - K THEN
+           GO TO WIND_INCANT_OK;
+        IF WIND_CANT != -(NAKRL - 1) THEN
+           SPK = 151;
+        GO TO RETURN_SPK;
+
+WIND_INCANT_OK:
+        WIND_CANT = K;
+        IF K != NAKRL + 3 THEN
+           GO TO RETURN_OK;
+        WIND_CANT = -(NAKRL - 1);
+
+        IF PAST_CLOSING THEN
+           DO;
+              SPK = 208;
+              PROP(WIND) = 1;
+           END;
+        ELSE
+           SPK = 42;
+
+        GO TO RETURN_SPK;
+
+/*
+   THE GREEK INCANTATION.
+*/
+GREEK_INCANTATION:
+        K = VOCAB(WORD(1),3);
+        SPK = 42;
+        IF LOC != GREEK_ROOM THEN
+           GO TO RETURN_SPK;
+        IF GREEK_CANT = 1 - K THEN
+           GO TO GREEK_INCANT_OK;
+        IF GREEK_CANT != -(ALPHA - 1) THEN
+           SPK = 151;
+        GO TO RETURN_SPK;
+
+GREEK_INCANT_OK:
+        GREEK_CANT = K;
+        IF K != ALPHA + 3 THEN
+           GO TO RETURN_SPK;
+
+        GREEK_CANT = -(ALPHA - 1);
+        IF PROP(CHALICE) = 0 THEN
+           GO TO RETURN_SPK;
+
+        PROP(CHALICE) = 0;
+        FIXED(CHALICE) = 0;
+        CALL PSPEAK(CHALICE,2);
+
+        GO TO RETURN_INPUT;
+
+/*
+  BRIEF. INTRANSITIVE ONLY. SUPPRESS LONG DESCRIPTIONS
+  AFTER FIRST TIME.
+*/
+BE_BRIEF:
+        ABBNUM = 10000;
+        DETAIL = 3;
+        GO TO RETURN_SPK;
+
+/*
+   READ. MAGAZINES IN DWARVISH, MESSAGE WE'VE SEEN, PARCHMENT, AND
+   ...  OYSTER?
+*/
+READ_WHATEVER:
+        IF HERE(MAGAZINE) THEN
+           OBJ = MAGAZINE;
+        IF HERE(WAD) THEN
+           OBJ = OBJ*OBJ_MAX + WAD;
+        IF HERE(TABLET) THEN
+           OBJ = OBJ*OBJ_MAX + TABLET;
+        IF HERE(MESSAGE) THEN
+           OBJ = OBJ*OBJ_MAX + MESSAGE;
+        IF HERE(PARCHMENT) THEN
+           OBJ = PARCHMENT;
+
+        IF LOC = GREEK_ROOM & !DARK THEN
+           DO;
+              SPK = 304;
+              GO TO RETURN_SPK;
+           END;
+
+        IF CAVE_CLOSED & TOTING(OYSTER) THEN
+           OBJ = OYSTER;
+        IF OBJ > OBJ_MAX | OBJ = 0 | DARK THEN
+           GO TO RANDOM_INTRANS;
+
+READ_OBJECT:
+        SPK = 206;
+        IF DARK THEN
+           GO TO RETURN_SPK;
+        IF OBJ = MAGAZINE THEN
+           SPK = 190;
+        IF OBJ = WAD THEN
+           SPK = 213;
+        IF OBJ = TABLET THEN
+           SPK = 196;
+        IF OBJ = MESSAGE THEN
+           SPK = 191;
+        IF OBJ = OYSTER & HINT_TAKEN(2) & TOTING(OYSTER) THEN
+           SPK = 194;
+        IF OBJ = PARCHMENT THEN
+           DO;
+              CALL PSPEAK(PARCHMENT,1);
+              GO TO RETURN_INPUT;
+           END;
+        IF OBJ != OYSTER | HINT_TAKEN(2) | !TOTING(OYSTER)
+         | !CAVE_CLOSED THEN
+          GO TO RETURN_SPK;
+        HINT_TAKEN(2) = YES(192,193,SPK_OK);
+        GO TO RETURN_INPUT;
+
+/*
+   BREAK. ONLY WORKS FOR MIRROR IN REPOSITORY, THE FLOOR IN THE
+   SHACK, AND, OF COURSE, THE VASE AND CHALICE.
+*/
+BREAK_OBJECT:
+        IF OBJ = MIRROR THEN
+           SPK = 148;
+        IF OBJ = FLOOR THEN
+           IF PROP(FLOOR) = 0 THEN
+              DO;
+                 IF TOTING(BAR) THEN 
+                    DO;
+                       PROP(FLOOR) = 1;
+                       FIXED(FLOOR) = -1;
+                       SPK = 205;
+                    END;
+                 ELSE
+                    SPK = 206;
+              END;
+        IF OBJ = VEND THEN
+           GO TO BREAK_VENDING;
+        IF OBJ = VASE & PROP(VASE) = 0 THEN
+           GO TO BREAK_VASE;
+        IF OBJ = CHALICE & PROP(CHALICE) = 0 THEN
+           GO TO BREAK_CHALICE;
+        IF OBJ != MIRROR | !CAVE_CLOSED THEN
+           GO TO RETURN_SPK;
+
+        CALL RSPEAK(197);
+        GO TO DISTURB_DWARVES;
+
+BREAK_VASE:
+        SPK = 198;
+        IF TOTING(VASE) THEN 
+           CALL DROP(VASE,LOC);
+        PROP(VASE) = 2;
+        FIXED(VASE) = -1;
+        GO TO RETURN_SPK;
+
+BREAK_CHALICE:
+        SPK = 297;
+        IF TOTING(CHALICE) THEN
+           CALL DROPIT(CHALICE,LOC);
+        PROP(CHALICE) = 3;
+        FIXED(CHALICE) = -1;
+        GO TO RETURN_SPK;
+
+BREAK_VENDING:
+        SPK = 309;
+        IF PROP(VEND) = 1 THEN
+           GO TO RETURN_SPK;
+        PROP(VEND) = 1;
+        SPK = 311;
+        IF PLACE(BATTERY) != 0 THEN
+           GO TO RETURN_SPK;
+        CALL DROPIT(BATTERY,LOC);
+        PROP(BATTERY) = 2;
+        SPK = 310;
+        GO TO RETURN_SPK;
+
+/*
+   WAKE.  USE IS TO DISTURB THE DWARVES OR THE ERMINE.
+*/
+WAKE_UP:
+        IF OBJ = ERMINE THEN
+           DO;
+              SPK = 220;
+              GO TO RETURN_SPK;
+           END;
+
+        IF OBJ = DWARF & CAVE_CLOSED THEN
+           DO;
+              CALL RSPEAK(199);
+              GO TO DISTURB_DWARVES;
+           END;
+
+        GO TO RETURN_SPK;
+
+/*
+   SUSPEND.
+   OFFER TO EXIT LEAVING THINGS RESTARTABLE, BUT
+   REQUIRING A DELAY BEFORE RESTARTING (SO CAN'T SAVE THE
+   WORLD BEFORE TRYING SOMETHING RISKY).
+*/
+SUSPEND_GAME:
+        IF !YES(323,54,54) THEN
+           GO TO RETURN_INPUT;
+
+        OPEN FILE(SUSPENS) TITLE ('SUSPEND');
+
+        IF SUSPEND_MISSING THEN
+           DO;
+              SPK = 330;
+              GO TO RETURN_SPK;
+           END;
+
+        SUSPEND_COUNT = SUSPEND_COUNT + 1;
+
+/*
+   CREATE THE VERIFICATION RECORD TO AVOID THE
+   GAME BEING CHANGED BETWEEN SUSPENSION AND RESUMPTION.
+*/
+        VER_VERSION    = VERSION;
+        VER_TRAVMAX    = TRAVMAX;
+        VER_TRAVSIE    = TRAVSIZE;
+        VER_LOC_MAX    = LOC_MAX;
+        VER_RTEXTMAX   = RTEXTMAX;
+        VER_OBJ_MAX    = OBJ_MAX;
+        VER_VERBMAX    = VERBMAX;
+        VER_VERBSIZE   = VERBSIZE;
+        VER_ACTION_MAX = ACTION_MAX;
+        VER_CLASSMAX   = CLASSMAX;
+        VER_CLASSIZE   = CLASSIZE;
+        VER_HINTMIN    = HINTMIN;
+        VER_HINTMAX    = HINTMAX;
+        VER_HINTSIZE   = HINTSIZE;
+        VER_LINEMAX    = LINEMAX;
+        VER_LINESIZE   = LINESIZE;
+
+/*
+   WRITE OUT EACH OF THE NECESSARY DATA STRUCTURES OR ARRAYS
+   WITH THE VERIFICATION RECORD BEING FIRST AND LAST.
+*/
+        WRITE FILE (SUSPENS) FROM (VERIFICATION_RECORD);
+        WRITE FILE (SUSPENS) FROM (ATLOC);
+        WRITE FILE (SUSPENS) FROM (ABB);
+        WRITE FILE (SUSPENS) FROM (PROP);
+        WRITE FILE (SUSPENS) FROM (LINK);
+        WRITE FILE (SUSPENS) FROM (PLACE);
+        WRITE FILE (SUSPENS) FROM (FIXED);
+        WRITE FILE (SUSPENS) FROM (MISC_WORDS);
+        WRITE FILE (SUSPENS) FROM (DWARF_STUFF);
+        WRITE FILE (SUSPENS) FROM (BIT_STRINGS);
+        WRITE FILE (SUSPENS) FROM (VERIFICATION_RECORD);
+
+        CLOSE FILE (SUSPENS);
+
+        CALL RSPEAK(327);
+        TKWORD = '.';
+        IF SUSPEND_COUNT != 1 THEN
+          TKWORD = 'S.';
+        PUT STRING (OUTSTR) EDIT ('You have suspended this game',
+            SUSPEND_COUNT, 'time', TKWORD) (A,F(3),2 A);
+        CALL LINEOUT;
+
+        RESUME_GAME = FALSE;
+        GAVE_UP = TRUE;
+        GO TO RETURN_END;
+
+/*
+   HOURS. REPORT CURRENT NON-PRIME-TIME HOURS.
+*/
+REPORT_HOURS:
+        SPK = 324;
+        GO TO RETURN_SPK;
+
+/*
+   LOG. TOGGLE LOG_GAME EITHER ON OR OFF.
+*/
+TOGGLE_LOG:
+        LOG_GAME = !LOG_GAME;
+        IF LOG_GAME THEN
+           SPK = 316;
+        ELSE
+           SPK = 317;
+        GO TO RETURN_SPK;
+
+/*
+   MURDOC. THE TRUE NAME OF THE MOLE ONCE SAID IN THE PRESENCE OF
+   THE MOLE, THEN THERE IS ACCESS TO THE SECRET PATH.
+*/
+MOLES_NAME:
+        MURDOC_ED = FALSE;
+        SPK = 315;
+        IF DLOC(MURDOC_NUM) != LOC THEN
+           GO TO RETURN_SPK;
+
+        MURDOC_ED = TRUE;
+        SPK = 247;
+        GO TO RETURN_SPK;
+
+/*
+   KISS. SEE WHAT THE ADVENTURER WANTS TO KISS.
+*/
+KISS_MY_GRITS:
+        IF OBJ = ERMINE THEN
+           DO;
+              SPK = 296;
+              GO TO RETURN_HURT;
+           END;
+        ELSE IF OBJ = BIRD | OBJ = SNAKE | OBJ = CLAM 
+              | OBJ = OYSTER | OBJ = DWARF | OBJ = DRAGON
+              | OBJ = TROLL | OBJ = BEAR THEN
+           SPK = 110;
+        GO TO RETURN_SPK;
+
+/*
+   THE WIZARD'S SPELLS.
+*/
+WIZARDS_SPELL:
+
+        SPK = 42;
+        IF !TOTING(STAFF) | PROP(STAFF) = 2 THEN
+           GO TO RETURN_SPK;
+
+        IF SPELL_TURN != TURNS THEN
+           DO;
+              SPELL_COUNT = 0;
+              SPELL_VALUE = 0;
+           END;
+        SPELL_TURN = TURNS + 1;
+
+        K = VOCAB(WORD(1),3);
+        SPELL_COUNT = SPELL_COUNT + 1;
+        SPELL_VALUE = SPELL_VALUE*3 + K - BELEG;
+
+        IF SPELL_COUNT < 3 THEN
+           GO TO RETURN_OK;
+
+        SELECT (SPELL_VALUE);
+
+           WHEN (00) DO;
+                        SPK = 254;
+                     END;
+
+           WHEN (01) DO;
+                        IF PERCENT(50) THEN
+                           CALL MOVE(STAFF,WIZARDS_CHAMBER);
+                        ELSE
+                           CALL MOVE(STAFF,NECROMANCERS_PRISON);
+                        SPK = 255;
+                     END;
+
+           WHEN (02) DO;
+                        IS_HURT = TRUE;
+                        SPK = 256;
+                     END;
+
+           WHEN (03) DO;
+                        CALL DESTROY(STAFF);
+                        SPK = 257;
+                        IF PLACE(KRATER) = PLAC(KRATER) THEN
+                           TREASURE_LOST = TREASURE_LOST + 1;
+                     END;
+
+           WHEN (04) DO;
+                        SPK = 258;
+                     END;
+
+           WHEN (05) DO;
+                        IF LOC = NECROMANCERS_PRISON THEN
+                           SPK = 42;
+                        ELSE
+                           SPK = 260;
+                     END;
+
+           WHEN (06) DO;
+                        IF LOC = NECROMANCERS_PRISON THEN
+                           DO;
+                              SPK = 259;
+                              LOC = -WIZARDS_CHAMBER;
+                           END;
+                        ELSE
+                           SPK = 260;
+                     END;
+
+           WHEN (07) DO;
+                        IS_DEAD = TRUE;
+                        SPK = 261;
+                     END;
+
+           WHEN (08) DO;
+                        SPK = 262;
+                        PROP(STAFF) = 1; /* EMIT LIGHT */
+                     END;
+
+           WHEN (09) DO;
+                        SPK = 263;
+                        PROP(STAFF) = 0; /* LIGHTS OUT */
+                     END;
+
+           WHEN (10) DO;
+                        SPK = 264;
+                        DO J = MINTRS TO MAXTRS;
+                           IF TOTING(J) THEN
+                              CALL DROPIT(J,WIZARDS_CHAMBER);
+                        END;
+                     END;
+
+           WHEN (11) DO;
+                        SPK = 265;
+                        LOC = -SECOND_POOL_ALCOVE;
+                     END;
+
+           WHEN (12) DO;
+                        SPK = 266;
+                        LOC = -PLEASURE_SIGN;
+                     END;
+
+           WHEN (13) DO;
+                        SPK = 267;
+                        IF PERCENT(5) THEN
+                           LOC = -Y_2;
+                        ELSE IF PERCENT(20) THEN
+                           LOC = -DEBRIS_ROOM;
+                        ELSE IF PERCENT(20) THEN
+                           LOC = -DEAD_END_2;
+                        ELSE IF PERCENT(20) THEN
+                           LOC = -MIRROR_CANYON;
+                        ELSE IF PERCENT(20) THEN
+                           LOC = -TOP_OF_STALACTITE;
+                        ELSE IF PERCENT(20) THEN
+                           LOC = -SHAPELESS_MAZE_10;
+                        ELSE IF PERCENT(20) THEN
+                           LOC = -ALL_DIFFERENT_MAZE_10;
+                        ELSE
+                           LOC = -CLASS_ROOM;
+                     END;
+
+           WHEN (14) DO;
+                        SPK = 268;
+                        STAFF_SNICKER = TRUE;
+                     END;
+
+           WHEN (15) DO;
+                        SPK = 269;
+                        STAFF_SNICKER = FALSE;
+                     END;
+
+           WHEN (16) DO;
+                        SPK = 270;
+                        DO J = MINTRS TO MAXTRS;
+                           IF PLACE(J) = IN_BUILDING & PLAC(J) != 0 THEN
+                              CALL MOVE(J,PLAC(J));
+                        END;
+                     END;
+
+           WHEN (17) DO;
+                        SPK = 271;
+                        CALL MOVE(STAFF,WIZARDS_CHAMBER);
+                        PROP(STAFF) = 3;
+                     END;
+
+           WHEN (18) DO;
+                        IF DLOC(NECRO_NUM) = 0 & DSEEN(NECRO_NUM) THEN
+                           DO;
+                              DLOC(NECRO_NUM) = Y_2;
+                              ODLOC(NECRO_NUM) = DLOC(NECRO_NUM);
+                              DSEEN(NECRO_NUM) = FALSE;
+                              SPK = 272;
+                           END;
+                        ELSE
+                           SPK = 42; /* NOTHING HAPPENS */
+                     END;
+
+           WHEN (19) DO;
+                        IF DLOC(NECRO_NUM) = 0 THEN
+                           DO;
+                              SPK = 273;
+                              DSEEN(NECRO_NUM) = FALSE;
+                           END;
+                        ELSE
+                           SPK = 42;
+                     END;
+
+           WHEN (20) DO;
+                        SPK = 274;
+                        PROP(STAFF) = 2;
+                     END;
+
+           WHEN (21) DO;
+                        SPK = 275;
+                        FALLS_STOP = FALLS_STOP + 5;
+                     END;
+
+           WHEN (22) DO;
+                        SPK = 276;
+                        FALLS_FLOOD = FALLS_FLOOD + 5;
+                     END;
+
+           WHEN (23) DO;
+                        IF DLOC(NECRO_NUM) = 0 THEN
+                           SPK = 42;
+                        ELSE
+                           DO;
+                              SPK = 277;
+                              DLOC(NECRO_NUM) = 0;
+                              ODLOC(NECRO_NUM) = 0;
+                              DSEEN(NECRO_NUM) = TRUE;
+                           END;
+                     END;
+
+           WHEN (24) DO;
+                        SPK = 278;
+                        DO J = MINTRS TO MAXTRS;
+                           IF PLACE(J) = WIZARDS_CHAMBER THEN
+                              CALL MOVE(J,IN_BUILDING);
+                        END;
+                     END;
+
+           WHEN (25) DO;
+                        SPK = 279;
+                        DO J = MINTRS TO MAXTRS;
+                           IF TOTING(J) THEN
+                              CALL DROPIT(J,IN_BUILDING);
+                        END;
+                     END;
+
+           WHEN (26) DO;
+                        SPK = 280;
+                        DLOC(NECRO_NUM) = LOC;
+                        ODLOC(NECRO_NUM) = LOC;
+                        DSEEN(NECRO_NUM) = TRUE;
+                        LOC = -LOC;
+                     END;
+
+           OTHERWISE CALL BUG(32);
+        END;
+
+        CALL RSPEAK(SPK);
+        SPELL_COUNT = 0;
+        SPELL_VALUE = 0;
+
+        IF LOC < 0 THEN
+           DO;
+             LOC = -LOC;
+             NEWLOC = LOC;
+             OLDLOC = LOC;
+             GO TO RETURN_MOVE;
+           END;
+
+        IF IS_HURT THEN
+           GO TO RETURN_HURT;
+        GO TO RETURN_INPUT;
+
+/*
+   ASSEMBLE THE RING
+*/
+CONSTRUCTION:
+        IF !(OBJ=RING | OBJ=RING1 | OBJ=RING2 
+           | OBJ=RING3 | OBJ=RING4) THEN
+           GO TO RETURN_SPK;
+        IF HERE(RING1) & HERE(RING2) & HERE(RING3) & HERE(RING4) THEN
+           IF LOC = CENTER_OF_EARTH THEN
+              DO;
+                 CALL DESTROY(RING1);
+                 CALL DESTROY(RING2);
+                 CALL DESTROY(RING3);
+                 CALL DESTROY(RING4);
+                 CALL MOVE(RING,LOC);
+                 SPK = 295;  /* RING BECOMES VERY HOT */
+              END;
+           ELSE
+              SPK = 293; /* CONDITIONS DON'T PERMIT */
+        ELSE
+           SPK = 292; /* NOT ENOUGH HERE TO ASSEMBLE */
+        GO TO RETURN_SPK;
+
+/*
+   PROVIDE A QUICK OUT.
+*/
+LETS_CHEAT:
+        IF CAVE_CLOSING | CAVE_CLOSED | PAST_CLOSING THEN
+           GO TO RETURN_DEAD;
+
+        CALL CAVE_IS_CLOSING;
+        CALL LINESKP;
+        CALL CAVE_IS_CLOSED;
+        CALL LINESKP;
+        GO TO RETURN_MOVE;
+
+/*
+   DIG A HOLE IN THE CAVE.
+*/
+DIG_HOLE:
+        IF !TOTING(SHOVEL) THEN
+           GO TO RETURN_SPK;
+
+        SPK = 306;
+        IF OBJ = 0 THEN
+           GO TO RETURN_SPK;
+
+        SPK = 307;
+        IF OBJ != HOLE THEN
+           GO TO RETURN_SPK;
+
+        SPK = 305;
+        IF LOC != COBBLE_CRAWL & LOC != TOP_SMALL_PIT THEN
+           GO TO RETURN_SPK;
+
+        IF PROP(HOLE) = 1 THEN
+           GO TO RETURN_SPK;
+
+        PROP(HOLE) = 1;
+        CALL PSPEAK(HOLE,1);
+        GO TO RETURN_INPUT;
+
+/*
+   PROVIDE A SNAPSHOT OF THE DATA BASE WITHOUT TERMINATION OF
+   THE GAME.
+*/
+SNAP_SHOT:
+        CALL DEBUG;
+        RECURSIVE = FALSE;
+        GO TO RETURN_OK;
+
+/*
+   OH DEAR, HE'S DISTURBED THE DWARVES.
+*/
+DISTURB_DWARVES:
+        CALL RSPEAK(136);
+        GO TO RETURN_END;
+
+/*
+   RETURN TO SUBROUTINE CALLER WITH AN APPROPRIATE CODE
+   SO THAT THE FINAL ACTION CAN BE TAKEN.
+*/
+RETURN_OK:
+        SPK = SPK_OK;
+
+RETURN_SPK:
+        RETURN(0);
+
+RETURN_MOVE:
+        RETURN(1);
+
+RETURN_END:
+        GAME_OVER = TRUE;
+        RETURN(1);
+
+RETURN__DEAD:
+        IS_DEAD = TRUE;
+        RETURN(1);
+
+RETURN_HURT:
+        IS_HURT = TRUE;
+        RETURN(1);
+
+RETURN_INPUT:
+        RETURN(2);
+
+RETURN_RETRY:
+        RETURN(3);
+
+RETURN_DECODE:
+        RETURN(4);
+
+        END ACTION_VERBS;
+
+/*
+   CAVE CLOSING.
+
+   THESE SUBROUTES HANDLE THE CLOSING OF THE CAVE. THE CAVE
+   CLOSES "CLOCK1" TURNS AFTER THE LAST TREASURE HAS BEEN
+   LOCATED (EXCLUDING THE PIRATE'S CHEST, WHICH MAY OF 
+   COURSE NEVER SHOW UP). NOTE THAT THE TREASURES NEED NOT
+   HAVE BEEN TAKEN YET, JUST LOCATED. HENCE CLOCK1 MUST BE
+   LARGE ENOUGH TO GET OUT OF THE CAVE (IT ONLY TICKS WHILE
+   INSIDE THE CAVE). WHEN IT HITS ZERO, WE CALL CAVE_IS_CLOSING
+   TO START CLOSING THE CAVE, AND THEN SIT BACK AND WAIT FOR
+   HIM TO TRY TO GET OUT. IF HE DOESN'T WITHIN CLOCK2 TURNS,
+   WE CLOSE THE CAVE. IF HE DOES TRY, WE ASSUME HE PANICS,
+   AND GIVE HIM A FEW ADDITIONAL TURNS TO GET FRANTIC BEFORE
+   WE CLOSE. WHEN CLOCK2 HITS ZERO, WE CALL CAVE_IS_CLOSED
+   TO TRANSPORT HIM INTO THE FINAL PUZZLE. NOTE THAT THE
+   PUZZLE DEPENDS UPON ALL SORTS OF RANDOM THINGS. FOR INSTANCE,
+   THERE MUST BE NO WATER OR OIL, SINCE THERE ARE BEANSTALKS
+   WHICH WE DON'T WANT TO BE ABLE TO WATER, SINCE THE CODE
+   CAN'T HANDLE IT. ALSO, WE CAN HAVE NO KEYS, SINCE THERE IS
+   A GRATE (HAVING MOVED THE FIXED OBJECT!) THERE SEPARATING
+   HIM FROM ALL THE TREASURES. MOST OF THESE PROBLEMS ARISE
+   FROM THE USE OF NEGATIVE PROP NUMBERS TO SUPPRESS THE
+   OBJECT DESCRIPTIONS UNTIL HE'S ACTUALL MOVED THE OBJECTS.
+
+   WHEN THE FIRST WARNING COMES, WE LOCK THE GRATE, DESTROY
+   THE BRIDGE, KILL ALL THE DWARVES (AND THE PIRATE), REMOVE
+   THE TROLL AND BEAR (UNLESS DEAD), AND SET "CAVE_CLOSING"
+   TO TRUE. LEAVE THE DRAGON. IT'S TOO MUCH TROUBLE TO MOVE IT.
+   FROM NOW UNTIL CLOCK2 RUNS OUT, HE CANNOT UNLOCK THE GRATE,
+   MOVE TO ANY LOCATION OUTSIDE THE CAVE, OR CREATE THE BRIDGE.
+   NOR CAN HE BE RESURRECTED IF HE DIES. NOTE THAT THE SNAKE
+   IS ALREADY GONE, SINCE HE GOT TO THE TREASURE ACCESSIBLE 
+   ONLY VIA THE HALL OF THE MT. KING. ALSO, HE'S BEEN IN THE
+   GIANT ROOM (TO GET EGGS), SO WE CAN REFER TO IT. ALSO ALSO,
+   HE'S GOTTEN THE PEARL, SO WE KNOW THE BIVALVE IS AN OYSTER.
+   *AND*, THE DWARVES MUST HAVCE BEEN ACTIVATED, SINCE WE'VE
+   FOUND THE CHEST.
+*/
+CAVE_IS_CLOSING: PROC;
+        PROP(GRATE) = 0;
+        PROP(FISSURE) = 0;
+        PROP(FLOOR) = 0;
+
+        DO I=1 TO DWARF_NUM;
+           DSEEN(I) = FALSE;
+           DLOC(I) = 0;
+        END;
+
+        DSEEN(PIRATE_NUM) = FALSE;
+        DLOC(PIRATE_NUM) = 0;
+
+        CALL MOVE(TROLL,0);
+        CALL MOVE(TROLL+OBJ_MAX,0);
+        CALL MOVE(TROLL2,PLAC(TROLL));
+        CALL MOVE(TROLL2+OBJ_MAX,FIXD(TROLL));
+
+        CALL JUGGLE(CHASM);
+        IF PROP(BEAR) != J THEN
+           CALL DESTROY(BEAR);
+        PROP(CHAIN) = 0;
+        FIXED(CHAIN) = 0;
+
+        PROP(AXE) = 0;
+        FIXED(AXE) = 0;
+
+        CALL RSPEAK(129);
+        CLOCK1 = -1;
+        CAVE_CLOSING = TRUE;
+
+        RETURN;
+        END CAVE_IS_CLOSING;
+
+/*
+   ONCE HE'S PANICKED, AND CLOCK2 HAS RUN OUT, WE COME HERE
+   TO SET UP THE STORAGE ROOM. THE ROOM HAS TWO LOCATIONS,
+   HARDWIRED AS NE_REPOSITORY (NE) AND SW_REPOSITORY (SW).
+   AT THE NE END, WE PLACE EMPTY BOTTLES, A NURSERY OF PLANTS,
+   A BED OF OYSTERS, A PILE OF LAMPS, RODS WITH STARS, SLEEPING
+   DWARVES, AND THE ADVENTURER. AT THE SW END WE PLACE GRATE
+   OVER TREASURES, SNAKE PIT, COVEY OF CAGED BIRDS, MORE RODS,
+   AND PILLOWS. A MIRROR STRETCHES ACROSS ONE WALL. MANY OF
+   THE OBJECTS COME FROM KNOWN LOCATIONS AND/OR STATES (E.G.
+   THE SNAKE IS KNOWN TO HAVE BEEN DESTROYED AND NEEDN'T BE
+   CARRIED AWAY FROM ITS OLD "PLACE"), MAKING THE VARIOUS 
+   OBJECTS BE HANDLED DIFFERENTLY. WE ALSO DROP ALL OTHER
+   OBJECTS HE MIGHT BE CARRYING (LEST HE HAVE SOME WHICH COULD
+   CAUSE TROUBLE, SUCH AS THE KEYS). WE DESRIBE THE FLASH OF
+   LIGHT AND TRUNDLE BACK.
+*/
+CAVE_IS_CLOSED: PROC;
+
+        PROP(BOTTLE) = PUT(BOTTLE,NE_REPOSITORY,1);
+        PROP(PLANT) = PUT(PLANT,NE_REPOSITORY,0);
+        PROP(OYSTER) = PUT(OYSTER,NE_REPOSITORY,0);
+        PROP(LAMP) = PUT(LAMP,NE_REPOSITORY,0);
+        PROP(ROD) = PUT(ROD,NE_REPOSITORY,0);
+        PROP(DWARF) = PUT(DWARF,NE_REPOSITORY,0);
+
+        LOC = NE_REPOSITORY;
+        OLDLOC, NEWLOC = LOC;
+
+/*
+   LEAVE THE GRATE WITH NORMAL (NON-NEGATIVE) PROPERTY.
+*/
+        I = PUT(GRATE,SW_REPOSITORY,0);
+        PROP(SNAKE) = PUT(SNAKE,SW_REPOSITORY,1);
+        PROP(BIRD) = PUT(BIRD,SW_REPOSITORY,1);
+        PROP(CAGE) = PUT(CAGE,SW_REPOSITORY,0);
+        PROP(ROD2) = PUT(ROD2,SW_REPOSITORY,0);
+        PROP(PILLOW) = PUT(PILLOW,SW_REPOSITORY,0);
+
+        PROP(MIRROR) = PUT(MIRROR,NE_REPOSITORY,0);
+        FIXED(MIRROR) = SW_REPOSITORY;
+
+        DO I = OBJ_MAX TO 1 BY -1;
+           IF TOTING(I) THEN
+              CALL DROPIT(I,PALACE_ELVEN_KING);
+        END;
+
+        CALL RSPEAK(132);
+        CAVE_CLOSED = TRUE;
+        CLOCK2 = -1;
+
+        RETURN;
+        END CAVE_IS_CLOSED;
+
+/*
+   SCORING SUBROUTINE
+
+   THE PRESENT SCORING ALGORITHM IS AS FOLLOWS:
+
+   OBJECTIVE:                 POINTS:       PRESENT TOTAL POSSIBLE:
+
+   GETTING WELL INTO CAVE       20                    20
+ 
+   EACH TREASURE < CHEST (5)    12                    60
+   TREASURE CHEST ITSELF        14                    14
+   EACH TREASURE > CHEST (21)   16                   326
+   THE CHALICE                  24                    24
+
+   SURVIVING          (MAX-NUM)*10                    40
+    (ONLY IF HE GOT INTO CAVE)
+
+   EACH DWARF KILLED (5)        10                    50
+   KILLING THE NOSTRIL MONSTER   5                     5
+   KILLING THE WANERING DRAGON   5                     5
+
+   NOT QUITTING                  9                     9
+
+   REACHING "CLOSING"           20                    20
+   "CLOSED": QUIT/KILLED        10
+             KLUTZED            25
+             WRONG WAY          30
+             SUCCESS            45                    45
+
+   CAME TO WITT'S END            1                     1
+   BALL IN EAST SIDE POOL ROOM   5                     5
+   BALL IN WEST SIDE POOL ROOM  10                    10
+   MOVED SHAPES (5) FROM MAZE    2                    10
+    AND INTO THE GEOMETRY ROOM
+
+   RUBBING THE RING             50                    50
+
+   ROUND OUT THE TOTAL           1                     1
+                                                     ---
+                                              TOTAL: 700
+
+   (POINTS CAN ALSO BE DEDUCTED FOR USING HINTS.)
+*/
+SCORING: PROC(SCORNG);
+        DCL SCORNG BIT(1);
+
+        CUR_SCORE = 0;
+        MAX_SCORE = 0;
+
+/*
+   FIRST TALLY UP THE TREASURES. MUST BE IN BUILDING AND
+   NOT BROKEN. GIVE THE POOR GUY 2 POINTS JUST FOR FINDING
+   EACH TREASURE.
+*/
+        DO I = MINTRS TO MAXTRS;
+           IF PTEXT(I) != 0 THEN
+              DO;
+                 K = 12;
+                 IF I = CHEST THEN
+                    K = 14;
+                 IF I > CHEST THEN
+                    K = 16;
+                 IF I = CHALICE THEN
+                    K = 24;
+                 IF PROP(I) >= 0 THEN
+                    CUR_SCORE = CUR_SCORE + 2;
+                 IF PLACE(I) = IN_BUILDING & PROP(I) = 0 THEN
+                    CUR_SCORE = CUR_SCORE + K - 2;
+                 MAX_SCORE = MAX_SCORE + K;
+              END;
+        END;
+
+/*
+   NOW LOOK AT HOW HE FINISHED AND HOW FAR HE GOT. MAXDIE
+   AND NUMDIE TELL US HOW WELL HE SURVIVED. GAVE_UP SAYS
+   WHETHER HE EXITED VIA QUIT OR SUSPEND. DFLAG WILL TELL US
+   IF HE EVER GOT SUITABLY DEEP INTO THE CAVE. CAVE_CLOSING
+   STILL INDICATES WHETHER HE REACHED THE ENDGAME. AND IF HE
+   GOT AS FAR AS "CAVE CLOSED" (INDICATED BY "CAVE_CLOSED"),
+   THEN BONUS IS ZERO FOR MUNDANE EXITS OR 133, 134, OR 135
+   IF HE BLEW IT (SO TO SPEAK).
+*/
+        IF DFLAG != 0 THEN
+           CUR_SCORE = CUR_SCORE + (MAXDIE-NUMDIE)*10;
+        MAX_SCORE = MAX_SCORE + MAXDIE*10;
+
+        IF !(SCORNG | GAVE_UP) THEN
+           CUR_SCORE = CUR_SCORE + 9;
+        MAX_SCORE = MAX_SCORE + 9;
+
+        IF DFLAG != 0 THEN
+           CUR_SCORE = CUR_SCORE + 20;
+        MAX_SCORE = MAX_SCORE + 20;
+
+        IF CAVE_CLOSING THEN
+           CUR_SCORE = CUR_SCORE + 20;
+        MAX_SCORE = MAX_SCORE + 20;
+
+        CUR_SCORE = CUR_SCORE + DKILL*10;
+        MAX_SCORE = MAX_SCORE + DWARF_NUM*10;
+
+        IF KILL_DRAGON THEN
+           CUR_SCORE = CUR_SCORE + 5;
+        MAX_SCORE = MAX_SCORE + 5;
+
+        IF KILL_NOSTRIL THEN
+           CUR_SCORE = CUR_SCORE + 5;
+        MAX_SCORE = MAX_SCORE + 5;
+
+        IF CAVE_CLOSED THEN
+           DO;
+              IF BONUS = 0 THEN
+                 CUR_SCORE = CUR_SCORE + 10;
+              IF BONUS = 135 THEN
+                 CUR_SCORE = CUR_SCORE + 25;
+              IF BONUS = 134 THEN
+                 CUR_SCORE = CUR_SCORE + 30;
+              IF BONUS = 133 THEN
+                 CUR_SCORE = CUR_SCORE + 45;
+           END;
+        MAX_SCORE = MAX_SCORE + 45;
+
+/*
+   DID HE COME TO WITT'S END AS HE SHOULD?
+*/
+        IF PLACE(MAGAZINE) = WITTS_END THEN
+           CUR_SCORE = CUR_SCORE + 1;
+        MAX_SCORE = MAX_SCORE + 1;
+
+/*
+   DID HE COME TO THE POOL ROOM AS HE SHOULD?
+*/
+        IF PLACE(BALL) = EAST_SIDE_POOL THEN
+           CUR_SCORE = CUR_SCORE + 5;
+        IF PLACE(BALL) = WEST_SIDE_POOL THEN
+           CUR_SCORE = CUR_SCORE + 10;
+        MAX_SCORE = MAX_SCORE + 10;
+
+/*
+   DID HE RUB THE RING IN THE RIGHT PLACE?
+*/
+        IF RUBBED_RING THEN
+           CUR_SCORE = CUR_SCORE + 50;
+        MAX_SCORE = MAX_SCORE + 50;
+
+/*
+   DID HE REMOVE THE SHAPES FROM THE SHAPELESS MAZE?
+*/
+        IF PLACE(STAR) = GEOMETRY_ROOM THEN
+           CUR_SCORE = CUR_SCORE + 2;
+        IF PLACE(CIRCLE) = GEOMETRY_ROOM THEN
+           CUR_SCORE = CUR_SCORE + 2;
+        IF PLACE(SQUARE) = GEOMETRY_ROOM THEN
+           CUR_SCORE = CUR_SCORE + 2;
+        IF PLACE(HEXAGON) = GEOMETRY_ROOM THEN
+           CUR_SCORE = CUR_SCORE + 2;
+        IF PLACE(PENTAGON) = GEOMETRY_ROOM THEN
+           CUR_SCORE = CUR_SCORE + 2;
+        MAX_SCORE = MAX_SCORE + 10;
+
+/*
+   ROUND IT OFF
+*/
+        CUR_SCORE = CUR_SCORE + 1;
+        MAX_SCORE = MAX_SCORE + 1;
+
+/*
+   DEDUCT POINTS FOR HINTS. HINTS < HINTMIN ARE SPECIAL.
+   SEE DATABASE DESCRIPTION.
+*/
+        DO I = 1 TO HINTSIZE;
+           IF HINT_TAKEN(I) THEN
+              CUR_SCORE = CUR_SCORE - HINTS(I,2);
+        END;
+
+        IF CUR_SCORE < 0 THEN
+           CUR_SCORE = 0;
+
+        RETURN;
+        END SCORING;
+
+/*
+   "HE'S DEAD, JIM."
+
+   IF THE IS_DEAD FLAG IS SET, IT MEANS THE CLOWN GOT HIMSELF KILLED.
+   WE'LL ALLOW THIS MAXDIE TIMES. MAXDIE IS AUTOMATICALLY SET BASED
+   ON THE NUMBER OF SNIDE MESSAGES AVAILABLE. EACH DEATH RESULTS IN
+   A MESSAGE (81, 83, ETC.) WHICH OFFERS REINCARNATION. IF ACCEPTED,
+   THIS RESULTS IN MESSAGE 82, 84, ETC. THE LAST TIME, IF HE WANTS
+   ANOTHER CHANCE, HE GETS A SNIDE REMARK AS WE EXIT. WHEN
+   REINCARNATED, ALL OBJECTS BEING CARRIED GET DROPPED AT OLDLOC2
+   (PRESUMABLY THE LAST PLACE PRIOR TO BEING KILLED) WITHOUT CHANGE
+   OF PROPS. THE LOOP RUNS BACKWARDS TO ASSURE THAT THE BIRD IS
+   DROPPED BEFORE THE CAGE. (THIS KLUGE COULD BE CHANGED ONCE WE'RE
+   SURE ALL REFERENCES TO BIRD AND CAGE ARE DONE BY KEYWORDS.) THE
+   LAMP IS A SPECIAL CASE (IT WOULDN'T DO TO LEAVE IT IN THE CAVE).
+   IT IS TURNED OFF AND LEFT OUTSIDE THE BUILDING (ONLY IF HE IS
+   CARRYING IT, OF COURSE). HE HIMSELF IS LEFT INSIDE THE BUILDING
+   (AND HEAVEN HELP HIM IF HE TRIES TO ZIP BACK INTO THE CAVE
+   WITHOUT THE LAMP!). OLDLOC IS ZAPPED SO HE CAN'T JUST "RETREAT".
+
+   THE EASIEST WAY TO GET KILLED IS TO FALL INTO A PIT IN PITCH
+   DARKNESS.
+*/
+DEAD_DUCK: PROC;
+        IF CAVE_CLOSING THEN
+           DO;
+              CALL RSPEAK(131);
+              NUMDIE = NUMDIE + 1;
+              GAME_OVER = TRUE;
+              RETURN;
+           END;
+
+         YEA = YES(81+NUMDIE*2,82+NUMDIE*2,SPK_OK);
+         NUMDIE = NUMDIE + 1;
+         IF NUMDIE = MAXDIE | !YEA THEN
+            DO;
+               GAME_OVER = TRUE;
+               RETURN;
+            END;
+
+         IS_DEAD = FALSE;
+
+         PLACE(WATER) = 0;
+         PLACE(OIL) = 0;
+         IF TOTING(LAMP) THEN
+            PROP(LAMP) = 0;
+
+         DO I = OBJ_MAX TO 1 BY -1;
+            IF TOTING(I) THEN 
+               DO;
+                  K = OLDLOC2;
+                  IF I = LAMP THEN
+                     K = END_OF_ROAD;
+                  CALL DROPIT(I,K);
+               END;
+         END;
+
+         LOC = IN_BUILDING;
+         OLDLOC, NEWLOC = LOC;
+         RETURN;
+         END DEAD_DUCK;
+
+/*
+   THE ADVENTURER HAS BEEN HURT AND CANNOT CARRY AS MUCH
+   AS HE OR SHE PREVIOUSLY COULD. MAY HAVE TO DROP SOMETHING.
+   MIGHT AS WELL QUIT IF EVEN THE LAMP CAN'T BE CARRIED.
+*/
+BEEN_HURT: PROC;
+
+        IS_HURT = FALSE;
+        DO WHILE (HOLDING >= HOLDMAX);
+           IHURT = OBJ_MAX;
+           DO WHILE (!TOTING(IHURT));
+              IHURT = IHURT - 1;
+           END;
+           CALL DROPIT(IHURT,LOC);
+        END;
+
+        CALL RSPEAK(SPK);  /* TO TELL HIM WHY */
+
+        IF HOLDMAX > 1 THEN
+           HOLDMAX = HOLDMAX - 1;
+        ELSE
+           DO;
+              CALL RSPEAK(221); /* CAN'T EVEN CARRY LAMP, QUIT */
+              GAME_OVER = TRUE;
+              RETURN;
+           END;
+
+        IF (HOLDMAX < 7) & TRUCK_SEEN THEN
+           DO;
+              TRUCK_SEEN = FALSE;
+              DLOC(TRUCK_NUM) = BRINK_OF_PIT;
+           END;
+
+        RETURN;
+        END BEEN_HURT;
+
+/*==========================*/
+
+/*
+   SUBROUTINES/FUNCTIONS
+
+   TOTING(OBJ)  = TRUE IF THE OBJECT IS BEING CARRIED
+   HERE(OBJ)    = TRUE IF THE OBJECT IS AT "LOC" (OR IS BEING CARRIED)
+   AT(OBJ)      = TRUE IF ON EITHER SIDE OF TWO-PLACED OBJECT
+   LIQ          = OBJECT NUMBER OF LIQUID IN BOTTLE
+   LIQLOC(LOC)  = OBJECT NUMBER OF LIQUID (IF ANY) AT LOC
+   BITSET(L,N)  = TRUE IF COND(L) HAS BIT N SET (BIT  IS UNITS BIT)
+   FORCED(LOC)  = TRUE IF LOC MOVES WITHOUT ASKING FOR INPUT (COND=2)
+   DARK         = TRUE IF LOCATION "LOC" IS DARK
+   PERCENT(N)   = TRUE N% OF THE TIME (N INTEGER FROM 0 TO 100)
+*/
+
+TOTING: PROC (TOTOBJ) RETURNS (BIT(1));
+        DCL TOTOBJ FIXED BIN(31);
+        RETURN (PLACE(TOTOBJ) = -1);
+        END TOTING;
+
+HERE:   PROC (HEREOBJ) RETURNS (BIT(1));
+        DCL HEREOBJ FIXED BIN(31);
+        RETURN (PLACE(HEREOBJ) = LOC | TOTING(HEREOBJ));
+        END HERE;
+
+AT:     PROC (ATOBJ) RETURNS (BIT(1));
+        DCL ATOBJ FIXED BIN(31);
+        RETURN (PLACE(ATOBJ) = LOC | FIXED(ATOBJ) = LOC);
+        END AT;
+
+LIQ:    PROC RETURNS (FIXED BIN(31));
+        RETURN LIQ2(MAX(PROP(BOTTLE),-1-PROP(BOTTLE))));
+        END LIQ;
+
+LIQ2:   PROC (PBOTL) RETURNS (FIXED BIN(31));
+        DCL PBOTL FIXED BIN(31);
+        LIQ2TEMP = PBOTL/2;
+        RETURN ((1-PBOTL)*WATER+(LIQ2TEMP*(WATER_OIL)));
+        END LIQ2;
+
+LIQLOC: PROC (LIQL) RETURNS (FIXED BIN(31));
+        DCL LIQL FIXED BIN(31);
+        LIQTEMP1 = COND(LIQL)/2;
+        LIQTEMP1 = LIQTEMP1*2;
+        LIQTEMP2 = COND(LIQL)/4;
+        RETURN (LIQ2((MOD(LIQTEMP1,8)-5)*MOD(LIQTEMP2,2)+1));
+        END LIQLOC;
+
+BITSET: PROC (BITLOC,BITCOND) RETURNS (BIT(1));
+        DCL (BITLOC,BITCOND) FIXED BIN(31);
+        BITTEMP = COND(BITLOC) / 2**BITCOND;
+        RETURN (MOD(BITTEMP,2) != 0);
+        END BITSET;
+
+FORCED: PROC (FORCELOC) RETURN (BIT(1));
+        DCL FORCELOC FIXED BIN(31);
+        RETURN (COND(FORCELOC) = 2);
+        END FORCED;
+
+DARK:   PROC RETURNS (BIT(1));
+        RETURN (MOD(COND(LOC),2) = 0
+                & PROP(STAFF) = 0
+                & (PROP(LAMP) = 0 | !HERE(LAMP)));
+        END DARK;
+
+PERCENT: PROC (PER) RETURNS (BIT(1));
+        DCL PER FIXED BIN(31);
+
+        RETURN (RAN(100) < PER);
+        END PERCENT;
+
+/*
+   I/O ROUTINES (SPEAK, PSPEAK, RSPEAK, GET_INPUT,
+   LINESKP, LINEOUT, YES, COMBINE_WORDS)
+*/
+
+/*
+   PRINT THE MESSAGE WHICH STARTS AT LINES(SPKNUM).
+   PRECEDE IT WITH A BLANK LINE UNLESS BLANK_LINE IS FALSE;
+*/
+SPEAK:  PROC (SPKNUM);
+        DCL SPKNUM FIXED BIN(31);
+
+        IF SPKNUM = 0 THEN 
+           RETURN;
+        IF LINES(SPKNUM+1) = '>$<' THEN
+           RETURN;
+        IF BLANK_LINE THEN
+           CALL LINESKP;
+        KSPEAK = SPKNUM;
+
+SPEAK1: LSPEAK = ABS(LINES(KSPEAK)) - 1;
+        KSPEAK - KSPEAK + 1;
+        PUT STRING (OUTSTR) EDIT
+            ((LINES(ISPEAK) DO ISPEAK = KSPEAK TO LSPEAK)) (9 A(8));
+        CALL LINEOUT;
+
+        KSPEAK = LSPEAK + 1;
+        IF LINES(KSPEAK) >= 0 THEN
+           GO TO SPEAK1;
+
+        RETURN;
+        END SPEAK;
+
+/*
+   FIND THE PVALUE+1ST MESSAGE FROM PMSSG AND PRINT IT. PMSG
+   SHOULD BE THE INDEX OF THE INVENTORY MESSAGE FOR OBJECT.
+   (INVEN+N+1 MESSAGE IS PROP=N MESSAGE).
+*/
+PSPEAK: PROC (PMSG,PVALUE);
+        DCL (PMSG,PVALUE) FIXED BIN(31);
+
+        PSNUM = PTEXT(PMSG);
+        IF PVALUE < = THEN
+           GO TO PSPEAK2;
+
+        DO PTNUM = 0 TO PVALUE;
+PSPEAK1:   PSNUM = ABS(LINES(PSNUM));
+           IF LINES(PSNUM) >= 0 THEN
+              GO TO PSPEAK1;
+        END;
+
+PSPEAK2:
+        CALL SPEAK(PSNUM);
+        RETURN;
+        END PSPEAK;
+
+/*
+   PRINT THE RTNUM-TH "RANDOM" MESSAGE (SECTION 6 OF DATABASE).
+*/
+RSPEAK: PROC (RTNUM);
+        DCL RTNUM FIXED BIN(31);
+
+        IF RTNUM != 0 THEN
+           CALL SPEAK(RTEXT(RTNUM));
+        RETURN;
+        END RSPEAK;
+
+/*
+   GET A COMMAND FROM THE ADVENTURER. SNARF OUT THE FIRST WORD,
+   PAD IT WITH BLANKS, AND RETURN IT IN WORD(1). CHARS 9 THROUGH 16
+   ARE RETURNED IN WORDX(1), IN CASE WE NEED TO PRINT OUT THE WHOLE
+   WORD IN AN ERROR MESSAGE. ANY NUMBER OF BLANKS MAY FOLLOW THE
+   WORD. IF A SECOND WORD APPEARS, IT IS RETURNED IN WORD(2) (CHARS
+   9 THRU 16 IN WORDX(2)), ELSE WORD(2) IS SET TO BLANK. TWO 
+   ADDITIONAL WORDS ARE EXTRACTED BUT THE PROGRAM CURRENTLY DOES
+   NOT MAKE ANY USE OF THEM.
+*/
+GET_INPUT: PROC;
+
+        WORD(1),WORDX(1),WORD(2),WORDX(2) = ' ';
+        WORD(3),WORDX(3),WORD(4),WORDX(4) = ' ';
+
+        IF LOG_GAME THEN
+           PUT SKIP EDIT (' ') (A);
+        WORDSTRT = 0;
+
+        DO WHILE (WORDSTRT = 0);
+           IF !BUFFERED_CMDS THEN
+              DO;
+                IF BLANK_LINE THEN
+                   CALL LINESKP;
+                CALL TREAD(INSTR,0,INSTR,INLEN,CCODE);
+                CMD_BUFFER = SUBSTR(INSTR,1,INLEN);
+              END;
+           CMD_LEN = INDEX(CMD_BUFFER,',') - 1;
+
+           IF CMD_LEN = -1 THEN
+              CMD_LEN = INDEX(CMD_BUFFER,';') - 1;
+
+           IF CMD_LEN = -1 THEN
+              DO;
+                BUFFERED_CMDS = FALSE;
+                OUTSTR = CMD_BUFFER;
+              END;
+           ELSE
+              DO;
+                 OUTSTR = SUBSTR(CMD_BUFFER,1,CMD_LEN);
+                 CMD_BUFFER = SUBSTR(CMD_BUFFER,CMD_LEN+2);
+                 BUFFERED_CMDS = TRUE;
+              END;
+
+           WORDSTRT = VERIFY(OUTSTR,' ');
+
+        END; /* DO WHILE */        
+
+        IF LOG_GAME THEN
+           PUT SKIP EDIT (OUTSTR) (A);
+
+/*
+   PULL OUT THE WORDS
+*/
+        DO INLEN = 1 TO 4;
+           OUTSTR = SUBSTR(OUTSTR,WORDSTRT);
+           WORDEND = INDEX(OUTSTR,' ') - 1;
+           IF WORDEND = -1 THEN
+              WORDEND = LENGTH(OUTSTR);
+
+           WORDSIZE = MIN(WORDEND,8);
+           WORD(INLEN) = SUBSTR(OUTSTR,1,WORDSIZE);
+
+           IF WORDEND > 8 THEN
+              DO;
+                 WORDSIZE = MIN(WORDEND-8,8);
+                 WORDX(INLEN) = SUBSTR(OUTSTR,9,WORDSIZE);
+              END;
+
+           IF WORDEND = LENGTH(OUTSTR) THEN
+              LEAVE;
+
+           OUTSTR = SUBSTR(OUTSTR,WORDEND+1);
+           WORDSTRT = VERIFY(OUTSTR,' ');
+           IF WORDSTRT = 0 THEN
+              LEAVE;
+        END;
+
+        RETURN;
+        END GET_INPUT;
+
+/*
+   OUTPUT A BLANK LINE
+*/
+LINESKP: PROC;
+
+         OUTSTR = ' ';
+         CALL LINEOUT;
+
+         RETURN;
+         END LINESKP;
+
+/*
+   OUTPUT A LINE TO THE PLAYER
+*/
+LINEOUT: PROC;
+
+         INSTR = OUTSTR;
+         IF LOG_GAME THEN
+            PUT SKIP EDIT (OUTSTR) (A);
+         CCODE = 0;
+
+         CALL TWRITE(INSTR,LENGTH(OUTSTR),CCODE);
+
+         RETURN;
+         END LINEOUT;
+
+/*
+   PRINT MESSAGE IN YES_QUEST, WAIT FOR YES/NO ANSWER.
+   IF YES, PRINT YES_ANS AND LEAVE YES TRUE. IF NO,
+   PRINT NO_ANS AND LEAVE YES FALSE.
+*/
+YES:     PROC (YES_QUEST,YES_ANS,NO_ANS) RETURNS (BIT(1));
+         DCL (YES_QUEST,YES_ANS,NO_ANS) FIXED BIN(31);
+
+YES_ASK: BUFFERED_CMDS = FALSE;
+         CALL RSPEAK(YES_QUEST);
+         CALL GET_INPUT;
+
+         IF WORD(1) = 'YES' | WORD(1) = 'Y' THEN
+            DO;
+               CALL RSPEAK(YES_ANS);
+               RETURN(TRUE);
+            END;
+
+         IF WORD(1) = 'NO' | WORD(1) = 'N' THEN
+            DO;
+               CALL RSPEAK(NO_ANS);
+               RETURN(FALSE);
+            END;
+
+         CALL LINESKP;
+         CALL RSPEAK(318);
+         GO TO YES_ASK;
+
+         END YES;
+
+/*
+   ONE AND TWO CONTAIN A 1-16 CHARACTER WORD IN CHAR(8) FORMAT.
+   THEY ARE CONCATENATED AND MOVED INTO TKWORD (A CHAR(16) VARYING
+   STRING) WITH THE LENGTH SET TO EXCLUDE TRAILING BLANKS.
+*/
+COMBINE_WORDS: PROC (ONE,TWO);
+          DCL (ONE,TWO) CHAR(8);
+
+          TKWORD = TRANSLATE(ONE||TWO,XLATETO,XLATEFR);
+          INLEN = INDEX(TKWORD,' ') - 1;
+          IF INLEN != -1 THEN
+             TKWORD = SUBSTR(TKWORD,1,INLEN);
+
+          RETURN;
+          END COMBINE_WORDS;
+
+/*
+   DATA STRUCTURE ROUTINES (VOCAB, LOOKUP, DESTROY, JUGGLE, MOVE,
+   PUT, CARRY, DROP).
+*/
+
+/*
+   LOOK UP ID IN THE VOCABULARY (VERB_NAME) AND RETURN ITS
+   "DEFINITION" (VERB_NUMB), OR -1 IF NOT FOUND. IF INIT IS
+   POSITIVE, THIS IS AN INITIALIZATION CALL SETTING UP A
+   KEYWORD VARIABLE, AND NOT FINDING IT CONSTITUTES A BUG.
+   IT ALSO MEANS THAT ONLY VERB_NUMB VALUES WHICH DIVIDED
+   BY 1000 EQUAL INIT MAY BE CONSIDERED. (THUS "STEPS", 
+   WHICH IS A MOTION VERB AS WELL AS AN OBJECT, MAY BE 
+   LOCATED AS AN OBJECT.) AND IT ALSO MEANS THE VERB_NUM 
+   VALUE IS TAKEN MOD 1000.
+*/
+VOCAB:  PROC(ID,INIT) RETURNS (FIXED BIN(31));
+        DCL ID CHAR(8);
+        DCL INIT FIXED BIN(31);
+
+        DO IVOCAB = 1 TO VERBMAX;
+           IF VERB_NUMB(IVOCAB) = -1 THEN
+              GO TO VOCAB2;
+           IF INIT >= 0 & VERB_NUMB(IVOCAB)/1000 != INIT THEN
+              GO TO VOCAB1;
+           IF VERB_NAME(IVOCAB) = ID THEN
+              GO TO VOCAB3;
+VOCAB1: END;
+        CALL BUG(21);
+
+VOCAB2: IF INIT < 0 THEN
+           RETURN(-1);
+        PUT STRING (OUTSTR) EDIT (ID) (A);
+        CALL LINEOUT;
+        CALL BUG(5);
+
+VOCAB3: VOCRTN  VERB_NUMB(IVOCAB);
+        IF INIT>= 0 THEN
+           VODRTN = MOD(VOCRTN,1000);
+        RETURN(VOCRTN);
+        END VOCAB;
+
+/*
+   LOOK UP THE NAME OF A RELATIVE AND RETURN IT.
+*/
+LOOKUP: PROC (PERSON) RETURNS(CHAR(8));
+        DCL PERSON FIXED BIN(31);
+
+        ILOOK = 1;
+        DO WHILE (ILOOK <= VERBMAX & VERB_NAME(ILOOK) != 'AKIBA');
+           ILOOK = ILOOK + 1;
+        END;
+
+        IF ILOOK > VERBMAX
+           THEN CALL BUG(21);
+
+        RETURN (VERB_NAME(PERSON + ILOOK));
+
+        END LOOKUP;
+
+/*
+   PERMANENTLY ELIMINATE "DESTOBJ" BY MOVING TO A
+   NON-EXISTENT LOCATION.
+*/
+DESTROY: PROC (DESTOBJ);
+        DCL DESTOBJ FIXED BIN(31);
+
+        CALL MOVE(DESTOBJ,0);
+        RETURN;
+        END DESTROY;
+
+/*
+   JUGGLE AN OBJECT BY PICKING IT UP AND PUTTING IT DOWN
+   AGAIN, THE PURPOSE BEING TO GET THE OBJECT TO THE FRONT
+   OF THE CHAIN OF THINGS AT ITS LOCATION.
+*/
+JUGGLE: PROC (JUGOBJ);
+        DCL JUGOBJ FIXED BIN(31);
+
+        IJUG = PLACE(JUGOBJ);
+        JJUG = FIXED(JUGOBJ);
+        CALL MOVE(JUGOBJ,IJUG);
+        CALL MOVE(JUGOBJ+OBJ_MAX,JJUG);
+        RETURN;
+        END JUGGLE;
+
+/*
+   PLACE ANY OBJECT ANYWHERE BY PICKING IT UP AND DROPPING
+   IT. MAY ALREADY BE TOTING, IN WHICH CASE THE CARRY IS A
+   NO-OP. MUSTN'T PICK UP OBJECTS WHICH ARE NOT AT ANY LOC,
+   SINCE CARRY WANTS TO REMOVE OBJECTS FROM ATLOC CHAINS.
+*/
+MOVE:   PROC (MOVEOBJ,MOVE_WHEHRE);
+        DCL (MOVEOBJ,MOVE_WHERE) FIXED BIN(31);
+
+        IF MOVEOBJ > OBJ_MAX THEN
+           GO TO MOVE1;
+        FROM = PLACE(MOVEOBJ);
+        GO TO MOVE2;
+
+MOVE1:  FROM = FIXED(MOVEOBJ-OBJ_MAX);
+MOVE2:  IF FROM > 0 & FROM <= 1000 THEN
+           CALL CARRY(MOVEOBJ,FROM);
+        CALL DROPIT(MOVEOBJ,MOVE_WHERE);
+        RETURN;
+        END MOVE;
+
+/*
+   PUT IS THE SAME AS MOVE, EXCEPT THAT IT RETURNS A VALUE
+   USED TO SET UP THE NEGATED PROP VALUES FOR THE REPOSITORY
+   OBJECTS.
+*/
+PUT:    PROC (PUTOBJ,PUT_WHERE,PVAL) RETURNS (FIXED BIN(31));
+        DCL (PUTOBJ_PUT_WHERE,PVAL) FIXED BIN(31);
+
+        CALL MOVE(PUTOBJ,PUT_WHERE);
+        RETURN((-1)-PVAL);
+        END PUT;
+
+/*
+   PLACE AN OBJECT AT A GIVEN LOC, PREFIXING IT ONTO THE
+   ATLOC LIST. DECREASE HOLDING IF THE OBJECT WAS BEING TOTED.
+*/
+DROPIT: PROC (DROPOBJ,DROP_WHERE);
+        DCL (DROPOBJ,DROP_WHERE) FIXED BIN(31);
+
+        IF DROPOBJ > OBJ_MAX THEN
+           GO TO DROP1;
+        IF PLACE(DROPOBJ) = -1 THEN
+           HOLDING = HOLDING - 1;
+        PLACE(DROPOBJ) = DROP_WHERE;
+        GO TO DROP2;
+
+DROP1:  FIXED(DROPOBJ-OBJ_MAX) = DROP_WHERE;
+
+DROP2:  IF DROP_WHERE <= 0 THEN
+           RETURN;
+        LINK(DROPOBJ) = ATLOC(DROP_WHERE);
+        ATLOC(DROP_WHERE) = DROPOBJ;
+        RETURN;
+
+        END DROPIT;
+
+/*
+   START TOTING AN OBJECT, REMOVING IT FROM THE LIST OF THINGS
+   AT ITS FORMER LOCATION. INCREASE HOLDING UNLESS IT WAS
+   ALREADY BEING TOTED. IF OBJECT > OBJ_MAX (MOVING "FIXED"
+   SECOND LOC), DON'T CHANGE PLACE OR HOLDING.
+*/
+CARRY:  PROC(CARRYOBJ,CARRY_WHERE);
+        DCL (CARRYOBJ,CARRY_WHERE) FIXED BIN(31);
+
+        IF CARRYOBJ <= OBJ_MAX THEN
+           DO;
+              IF PLACE(CARRYOBJ) = -1 THEN
+                 RETURN;
+              PLACE(CARRYOBJ) = -1;
+              HOLDING = HOLDING + 1;
+           END;
+
+        IF ATLOC(CARRY_WHERE)= CARRYOBJ THEN
+           DO;
+              ATLOC(CARRY_WHERE) = LINK(CARRYOBJ);
+              RETURN;
+           END;
+
+        TEMP = ATLOC(CARRY_WHERE);
+        DO WHILE(LINK(TEMP) != CARRYOBJ);
+           TEMP = LINK(TEMP);
+           IF TEMP = 0 THEN
+              CALL BUG(29);
+        END;
+        LINK(TEMP) = LINK(CARRYOBJ);
+
+        RETURN;
+        END CARRY;
+
+/*
+   RETURNS RANDOM NUMBER BETWEEN 0 AND NRAN-1
+*/
+RAN:    PROC(NRAN) RETURNS (FIXED BIN(31));
+        DCL NRAN FIXED BIN(31);
+
+        RANRTN = NRAN;
+        DO WHILE (RANRTN = NRAN);
+           Y = RANDOM;
+           RANRTN = Y*NRAN;
+        END;
+
+        RETURN(RANRTN);
+        END RAN;
+
+/*
+   RANDOM IS A (PURELY MULTIPLICATIVE) LINEAR CONGRUENTIAL
+   UNIFORM RANDOM NUMBER GENERATOR THAT RETURNS A FLOAT VALUE
+   BETWEEN 0 AND 1. THE MULTIPLIER 16807(=7**5) IS ONE OF THE
+   BEST CURRENTLY KNOWN AND HAS PASSED MANY ELABORATE TESTS 
+   FOR RANDOMNESS.
+*/
+RANDOM: PROC RETURN(FLOAT DEC(6));
+
+(NOFIXEDOVERFLOW):
+        X = X*16807;
+        IF X < 0 THEN
+           X = (X + 2147483647) + 1;
+        VAL = X;
+        VAL = VAL/2147483647;
+        RETURN(VAL);
+        END RANDOM;
+
+/*
+   PUT OUT FINAL MESSAGE FOR FULL SCREEN PROCESSORS
+*/
+CIAO:   PROC;
+        PUT STRING (OUTSTR) EDIT (('*=' DO I=1 TO 30), '*')
+            (31 A(2));
+        CALL LINEOUT;
+        RETURN;
+        END CIAO;
+
+/*
+   INITIALIZE THE DATABASE
+
+   THE DATA FILE CONTAINS SEVERAL SECTIONS. EACH BEGINS WITH
+   A LINE CONTAINING A NUMBER IDENTIFYING THE SECTION, AND
+   ENDS WITH A LINE CONTAINING "-1". EACH SECTION IS DESCRIBED
+   IN THE SUBROUTINE THAT INITIALIZES IT.
+
+   SECTION 0 IS THE END OF THE DATABASE.
+
+*/
+INIT_DATA: PROC;
+
+        IF INDEX(JCLPARM,'AUDIT') != 0 THEN
+           AUDIT_GAME = TRUE;
+        IF INDEX(JCLPARM,'LOG') != 0 THEN
+           LOG_GAME = TRUE;
+        IF INDEX(JCLPARM,'BLANK') != 0 THEN
+           BLANK_LINE = TRUE;
+        IF INDEX(JCLPARM,'RESUME') != 0 THEN
+           RESUME_GAME = TRUE;
+
+        PUT STRING (OUTSTR) EDIT ('Initializing.....') (A);
+        CALL LINEOUT;
+
+        KEY = 0;
+        KK = 0;
+        LINESIZE = 1;
+        TRAVSIZE = 1;
+        CLASSIZE = 0;
+
+        OPEN FILE (CAVES) INPUT;
+        ON ENDFILE (CAVES) CALL BUG(10);
+
+/*
+   STAT NEW DATA SECTION. SECT IS THE SECTION NUMBER.
+*/
+INIT_LOOP:
+        SECT = -1;
+        CALL INIT_READ;
+
+        OLDLOC = -1;
+
+        IF AUDIT_GAME THEN
+           DO;
+              PUT STRING (OUTSTR) EDIT ('Reading Section #', SECT) (A,F(2));
+              CALL LINEOUT;
+           END;
+
+        SELECT (SECT);
+           WHEN (0)  GO TO INIT_FINISH;
+           WHEN (1)  CALL INIT_TEXT;
+           WHEN (2)  CALL INIT_TEXT;
+           WHEN (3)  CALL INIT_TRAVEL;
+           WHEN (4)  CALL INIT_VOCAB;
+           WHEN (5)  CALL INIT_TEXT;
+           WHEN (6)  CALL INIT_TEXT;
+           WHEN (7)  CALL INIT_LOCATION;
+           WHEN (8)  CALL INIT_DEFAULT;
+           WHEN (9)  CALL INIT_LIQUID;
+           WHEN (10) CALL INIT_TEXT;
+           WHEN (11) CALL INIT_HINTS;
+           OTHERWISE CALL BUG(9);
+        END;
+
+        GO TO INIT_LOOP;
+
+/*
+   FINISH CONSTRUCTING INTERNAL DATA FORMAT.
+
+   HAVING READ IN THE DATABASE, CERTAIN THINGS ARE NOW
+   CONSTRUCTED. WE FINISH SETTING UP COND BY CHECKING
+   FOR FORCED-MOTION TRAVEL ENTRIES.
+*/
+INIT_FINISH:
+        CLOSE FILE (CAVES);
+
+        DO I = 1 TO LOC_MAX;
+           IF LTEXT(I) != 0 & KEY(I) != 0 THEN
+              DO;
+                 K = KEY(I);
+                 IF MOD(ABS(TRAVEL(K)),1000) = 1 THEN
+                   COND(I) = 2;
+              END;
+        END;
+
+/*
+   SET UP THE ATLOC AND LINK ARRAYS AS DESCRIBED ABOVE.
+   WE'LL USE THE DROP SUBROUTINE, WHICH PREFACES NEW OBJECTS
+   ON THE LISTS. SINCE WE WANT THINGS IN THE OTHER ORDER,
+   WE'LL RUN THE LOOP BACKWARDS. IF THE OBJECT IS IN TWO
+   LOCATIONS, WE DROP IT TWICE. THIS ALSO SETS UP "PLACE"
+   AND "FIXED" AS COPIES OF "PLAC" AND "FIXD". ALSO, SINCE
+   TWO-PLACED OBJECTS ARE TYPICALLY BEST DESCRIBED LAST,
+   WE'LL DROP THEM FIRST.
+*/
+        DO I = OBJ_MAX TO 1 BY -1;
+           IF FIXD(I) > 0 THEN
+              DO;
+                 CALL DROPIT(I+OBJ+MAX,FIXD(I));
+                 CALL DROPIT(I,PLAC(I));
+              END;
+        END;
+
+        DO I = OBJ_MAX TO 1 BY -1;
+           FIXED(I) = FIXD(I);
+           IF PLAC(I) != 0 & FIXD(I) <= 0 THEN
+              CALL DROPIT(I,PLAC(I));
+        END;
+
+/*
+   TREASURES, AS NOTED EARLIER, ARE OBJECTS MINTRS (50) THROUGH
+   MAXTRS (CURRENTLY 80).  THEIR PROPS ARE INITIALLY -1, AND
+   ARE SET TO 0 THE FIRST TIME THEY ARE DESCRIBED. TREASURE_LEFT
+   KEEPS TRACK OF HOW MANY ARE NOT YET FOUND, SO WE KNOW WHEN TO
+   CLOSE THE CAVE. TREASURE_LOST COUNTS HOW MANY CAN NEVER BE
+   FOUND (E.E. IF LOST BIRD OR BRIDGE).
+*/
+        MINTRS = 50;
+        MAXTRS = 80;
+        TREASURE_LEFT = 0;
+        TREASURE_LOST = 0;
+
+        DO I = MINTRS TO MAXTRS;
+           IF PTEXT(I) != 0 THEN
+              PROP(I) = -1;
+           TREASURE_LEFT = TREASURE_LEFT - PROP(I);
+        END;
+
+/*
+   INITIALIZE THE SYMBOLIC WORDS
+*/
+        CALL INIT_WORDS;
+
+/*
+   INITIALIZE THE DWARF LOCATIONS.
+*/
+        CALL INIT_DWARVES;
+
+/*
+   MISCELLANEOUS ITEMS
+*/
+        ABBNUM = 5;
+        DO I = 0 TO 4;
+           IF RTEXT(2*I+81) != 0 THEN
+              MAXDIE = I + 1;
+        END;
+
+        HOLDING = 0;
+        HOLDMAX = 7;
+        HOLDPREV = HOLDMAX;
+
+        CLOCK1 = 30;
+        CLOCK2 = 50;
+
+/*
+   REPORT ON DATABASE USAGE
+*/
+        CALL INIT_REPORT;
+
+/*
+   FINALLY, SINCE WE'RE CLEARLY SETTING THINGS UP FOR THE
+   FIRST TIME...
+*/
+        CALL LINESKP;
+        PUT STRING (OUTSTR) EDIT ('Version ',VERSION) (2 A);
+        CALL LINEOUT;
+        CALL LINESKP;
+
+/*
+   START-UP AND RUN THE RANDOM NUMBER GENERATOR SEVERAL TIMES
+*/
+        I = TIME;
+        I = MOD(I,512) + 1;
+
+        DO J = 1 TO I;
+           K = RAN(1);
+        END;
+
+        I = RAN(1);
+
+        IF RESUME_GAME THEN
+           CALL INIT_RESUME;
+        IF RESUME_GAME | GAME_OVER THEN
+           RETURN;
+
+        HINT_TAKEN(3) = YES(65,1,0);
+        CALL LINESKP;
+
+        LOC,NEWLOC = 1;
+
+        LAMP_LIFE = 800;
+        IF HINT_TAKEN(3) THEN
+           LAMP_LIFE = 1800;
+
+        RETURN;
+
+        END INIT_DATA;
+
+/*
+   SECTIONS 1, 2, 5, 6, 10.  READ MESSAGES AND SET UP POINTERS.
+
+   ALL TEXT IS STORED IN ARRAY LINES. EACH LINE IS PRECEDED BY
+   A WORD POINTING TO THE NEXT POINTER (I.E. THE WORD FOLLOWING
+   THE END OF THE LINE). THE POINTER IS NEGATIVE IF THIS IS THE
+   FIRST LINE OF A MESSAGE. THE TEXT-POINTER ARRAYS CONTAIN 
+   INDICES OF POINTER-WORDS IN LINES. STEXT(N) IS SHORT DESCRIPTION
+   OF LOCATION N. LTEXT(N) IS LONG DESCRIPTION OF LOCATION N.
+   PTEXT(N) POINTS TO MESSAGE FOR PROP(N)=0. SUCCESSIVE PROP
+   MESSAGES ARE FOUND BY CHASING POINTERS. RTEXT CONTAINS SECTION
+   6 STUFF. CTEXT(N) POINTS TO A PLAYER-CLASS MESSAGE.
+
+   SECTION 1: LONG FORM DESCRIPTIONS. EACH LINE CONTAINS A LOCATION
+       NUMBER AND A LINE OF TEXT. THE SET OF (NECESSARILY ADJACENT)
+       LINES WHOSE NUMBERS ARE X FOR THE LONG DESCRIPTION OF 
+       LOCATION X.
+
+   SECTION 2: SHORT FORM DESCRIPTIONS. SAME FORMAT AS LONG FORM.
+       NOT ALL PLACES HAVE SHORT DESCRIPTIONS.
+
+   SECTION 5: OBJECT DESCRIPTIONS. EACH LINE CONTAINS A NUMBER (N)
+       AND A MESSAGE. IF N IS FROM 1 TO 500, THE MESSAGE IS THE 
+       "INVENTORY" MESSAGE FOR OBJECT N. OTHERWISE, N SHOULD BE
+       0000, 1000, 2000, ETC., AND THE MESSAGE SHOULD BE THE
+       DESCRIPTIN OF THE PRECEDING OBJECT WHEN ITS PROP VALUE IS
+       N/1000. THE N/1000 IS USED ONLY TO DISTINGUISH MULTIPLE
+       MESSAGES FROM MULTI-LINE MESSAGES. THE PROP INFO ACTUALLY
+       REQUIRES ALL MESSAGES FOR AN OBJECT TO BE PRESENT AND
+       CONSECUTIVE. PROPERTIES WHICH PRODUCE NO MESSAGE SHOULD BE
+       GIVEN THE MESSAGE ">$<".
+
+   SECTION 6: ARBITRARY MESSAGES. SAME FORMAT AS SECTIONS 1, 2, AND
+       5, EXCEPT THE NUMBERS BEAR NO RELATION TO ANYTHING (EXCEPT
+       FOR SPECIAL VERBS IN SECTION 4).
+
+   SECTION 10: CLASS MESSAGES. EACH LINE CONTAINS A NUMBER (N) AND
+       A MESSAGE DESCRIBING A CLASSIFICATION OF PLAYER. THE END GAME
+       SECTION SELECTS THE APPROPRIATE MESSAGE, WHERE EACH MESSAGE
+       IS CONSIDERED TO APPLY TO PLAYERS WHOSE SCORES ARE HIGHER THAN
+       THE PREVIOUS N BUT NOT HIGHER THAN THIS N. NOTE THAT THESE
+       SCORES PROBABLY CHANGE WITH EVERY MODIFICATION (AND PARTICULARLY
+       EXPANSION) OF THE PROGRAM.
+*/
+INIT_TEXT: PROC;
+
+INIT_TEXT_READ:
+        CALL INIT_READ;
+        IF LOC = -1 THEN
+           RETURN;
+
+        DO K = 1 TO 9;
+           KK = LINESIZE + 10 - K;
+           IF LINES(KK) != ' ' THEN
+              GO TO INIT_TEXT_SIZE;
+        END;
+        CALL BUG(1);
+
+INIT_TEXT_SIZE:
+        PICWORD = KK + 1;
+        LINES(LINESIZE) = PICWORD;
+        IF LOC = OLDLOC THEN
+           GO TO INIT_TEXT_COMMON;
+        PICWORD = -LINES(LINESIZE);
+        LINES(LINESIZE) = PICWORD;
+
+        SELECT (SECT);
+           WHEN (1)  GO TO INIT_TEXT_LONG;
+           WHEN (2)  GO TO INIT_TEXT_SHORT;
+           WHEN (5)  GO TO INIT_TEXT_PROP;
+           WHEN (6)  GO TO INIT_TEXT_RTEXT;
+           WHEN (10) GO TO INIT_TEXT_CLASS;
+           OTHERWISE CALL BUG(9);
+        END;
+
+INIT_TEXT_LONG:
+        LTEXT(LOC) = LINESIZE;
+        GO TO INIT_TEXT_COMMON;
+
+INIT_TEXT_SHORT:
+        STEXT(LOC) = LINESIZE;
+        GO TO INIT_TEXT_COMMON;
+
+INIT_TEXT_PROP:
+        IF LOC > 0 & LOC <= OBJ_MAX THEN
+           PTEXT(LOC) = LINESIZE;
+        GO TO INIT_TEXT_COMMON;
+
+INIT_TEXT_RTEXT:
+        IF LOC > RTEXMAX THEN
+           CALL BUG(6);
+        RTEXT(LOC) = LINESIZE;
+        GO TO INIT_TEXT_COMMON;
+
+INIT_TEXT_CLASS:
+        CLASSIZE = CLASSIZE + 1;
+        IF CLASSIZE > CLASSMAX THEN
+           CALL BUG(12);
+        CTEXT(CLASSIZE) = LINESIZE;
+        CLSVALUE(CLASSIZE) = LOC;
+        GO TO INIT_TEXT_COMMON;
+
+INIT_TEXT_COMMON:
+        LINESIZE = KK + 1;
+        LINES(LINESIZE) = '-1';
+        OLDLOC = LOC;
+        IF LINESIZE + 9 > LINEMAX THEN
+           CALL BUG(2);
+        GO TO INIT_TEXT_READ;
+
+        END INIT_TEXT;
+
+/*
+   THE STUFF FOR SECTION 3 IS ENCODED HERE. EACH
+   "FROM-LOCATINO" GETS A CONTIGUOUS SECTION OF THE "TRAVEL"
+   ARRAY. EACH ENTRY IN TRAVEL IS NEWLOC*1000 * KEYWORD
+   (FROM SECTION 4, MOTION VERBS), AND IS NEGATED IF THIS IS
+   THE LAST ENTRY FOR THIS LOCATION.  KEY(N) IS THE INDEX IN
+   TRAVEL OF THE FIRST OPTION AT LOCATION N.
+
+   SECTION 3:  TRAVEL TABLE. EACH LINE CONTAINS A LOCATION
+       NUMBER (X), A SECOND LOCATION NUMBER (Y), AND A LIST
+       OF MOTION NUMBERS (SEE SECTION 4). EACH MOTION
+       REPRESENTS A VERB WHICH WILL TO GO Y IF CURRENTLY AT
+       X. Y, IN TURN, IS INTERPRETED AS FOLLOWS. LET 
+       M = Y/4000, N = Y MOD 4000.
+            IF N<=1000       IT IS THE LOCATION TO GO TO.
+            IF 1000<N<1500   N-1000 IS USED IN A COMPUTED
+                             GOTO TO A SECTION OF SPECIAL
+                             CODE.
+            IF 1500<N<=3000  MESSAGE N-1500 FROM SECTION 6
+                             IS PRINTED, AND HE STAYS 
+                             WHEREVER HE IS.
+            IF 3000<N<4000   GO TO N-3000, BUT THERE IS NO
+                             WAY BACK.
+       MEANWHILE, M SPECIFIES THE CONDITIONS ON THE MOTION.
+            IF M=0           IT'S UNCONDITIONAL.
+            IF 0<M<100       IT IS DONE WITH M% PROBABILITY.
+            IF M=100         UNCONDITIONAL, BUT FORBIDDEN
+                             TO DWARVES.
+            IF 100<M<=600    HE MUST BE CARRYING OBJECT M-100.
+            IF 600<M<=1100   MUST BE CARRYING OR IN SAME ROOM
+                             AS M-600.
+            IF 1100<M<=1600  PROP(M-1100) MUST *NOT* BE 0.
+            IF 1600<M<=2100  PROP(M-1600) MUST *NOT* BE 1.
+            IF 2100<M<=2600  PROP(M-2100) MUST *NOT* BE 2, ETC.
+       IF THE CONDITION (IF ANY) IS NOT MET, THEN THE NEXT
+       *DIFFERENT* "DESTINATION" VALUE IS USED (UNLESS IT FAILS
+       TO MEET *ITS* CONDITIONS, IN WHICH CASE THE NEXT IS FOUND,
+       ETC.). TYPICALLY, THE NEXT DEST WILL BE FOR ONE OF THE
+       SAME VERBS, SO THAT ITS ONLY USE IS AS THE ALTERNATE
+       DESTINATION FOR THOSE VERBS. FOR INSTANCE:
+            
+            15       440022  29   31   34   35   23   43
+            15       14      29
+
+       THIS SAYS THAT, FROM LOC 15, ANY OF THE VERBS 29, 31, ETC.
+       WILL TAKE HIM TO 22 IF HE'S CARRYING OBJECT 10, AND OTHERWISE
+       WILL GO TO 14.
+
+            11       4412008 49
+            11       9       50
+
+       THIS SAYS THAT, FROM LOC 11, 49 TAKES HIM TO 8 UNLESS 
+       PROP(3)=0, IN WHICH CASE HE GOES TO 9. VERB 50 TAKES HIM
+       TO 9 REGARDLESS OF PROP(3).
+*/
+INIT_TRAVEL: PROC;
+
+INIT_TRAVEL_READ:
+        CALL INIT_READ;
+        IF LOC = -1 THEN RETURN;
+
+        IF KEY(LOC) != 0 THEN 
+           TRAVEL(TRAVSIZE-1) = -TRAVEL(TRAVSIZE-1);
+        ELSE
+           KEY(LOC) = TRAVSIZE;
+
+        DO L = 1 TO 8;
+           IF TK(L) = 0 THEN
+              LEAVE;
+           TRAVEL(TRAVSIZE) = NEWLOC*50;
+           TRAVEL(TRAVSIZE) = TRAVEL(TRAVSIZE)*10;
+           TRAVEL(TRAVSIZE) = TRAVEL(TRAVSIZE)*2 + TK(L);
+           TRAVSIZE = TRAVSIZE + 1;
+           IF TRAVSIZE = TRAVMAX THEN
+              CALL BUG(3);
+        END;
+
+        TRAVEL(TRAVSIZE-1) = -TRAVEL(TRAVSIZE-1);
+        GO TO INIT_TRAVEL_READ;
+
+        END INIT_TRAVEL;
+
+/*
+   HERE WE READ IN THE VOCABULARY. VERB_NUMB(N) IS THE WORD
+   NUMBER, VERB_NAME(N) IS THE CORRESPONDING WORD. THE -1 AT THE
+   END OF SECTION 4 IS LEFT IN VERB_NUMB AS AN END-MARKER. THE
+   WORDS ARE GIVEN A MINIMAL HASH TO MAKE READING THE CORE-IMAGE
+   HARDER. NOTE THAT '/7-08' HAD BETTER NOT BE IN THE LIST, SINCE
+   IT WOULD HASH TO -1. (HAGING REMOVED IN PL/1 VERSION).
+
+   SECTION 4: VOCABULARY. EACH LINE CONTAINS A NUMBER (N) AND AN
+       EIGHT-LETTER WORD. CALL M=N/1000. IF M=0, THEN THE WORD IS
+       A MOTION VERB FOR USE IN TRAVELLING (SEE SECTION 3). IF M=1,
+       THE WORD IS A SPECIAL CASE VERB (SUCH AS "?") AND N MOD 1000
+       IS AN INDEX INTO SECTION 6 OR IS A SPECIAL CASE SUBSET FOR
+       SPELLS AND INCANTATIONS.
+       IF M=4, THE WORD IS ONE OF LORD KAZK'S RELATIVES.
+
+       OBJECT FROM 50 TO (CURRENTLY, ANYWAY) 80 ARE CONSIDERED
+       TREASURES (FOR PIRATE,CLOSEOUT).
+*/
+INIT_VOCAB: PROC;
+
+        DO VERBSIZE = 1 TO VERBMAX;
+           CALL INIT_READ;
+           IF VERB_NUMB(VERBSIZE) = -1 THEN
+              RETURN;
+        END;
+        CALL BUG(4);
+        END INIT_VOCAB;
+
+/*
+   READ IN THE INITIAL LOCATIONS FOR EACH OBJECT. ALSO THE
+   IMMOVABILITY INFO. PLAC CONTAINS INITIAL LOCATIONS OF OBJECTS.
+   FIXD IS -1 FOR IMMOVABLE OBJECTS (INCLUDING THE SNAKE), OR
+   = SECOND LOC FOR TWO-PLACED OBJECTS.
+
+   SECTION 7:  OBJECT LOCATIONS. EACH LINE CONTAINS AN OBJECT
+       NUMBER AND ITS INITIAL LOCATION (ZERO (OR OMITTED) IF NONE).
+       IF THE OBJECT IS IMMOVABLE, THE LOCATION IS FOLLOWED BY A
+       "-1". IF IT HAS TWO LOCATIONS (E.G. THE GRATE) THE FIRST
+       LOCATION IS FOLLOWED WITH THE SECOND, AND THE OBJECT IS 
+       ASSUMED TO BE IMMOVABLE.
+*/
+INIT_LOCATION: PROC;
+
+INIT_LOCATION_READ:
+        CALL INIT_READ;
+        IF OBJ = -1 THEN
+           RETURN;
+        PLAC(OBJ) = J;
+        FIXD(OBJ) = K;
+        GO TO INIT_LOCATION_READ;
+
+        END INIT_LOCATION;
+
+/*
+   READ DEFAULT MESSAGE NUMBERS FOR ACTION VERBS, STORE IN
+   ACTION_SPK.
+
+   SECTION 8: ACTION DEFAULTS. EACH LINE CONTAINS AN "ACTION VERB"
+       NUMBER AND THE INDEX (IN SECTION 6) OF THE DEFAULT MESSAGE
+       FOR THE VERB.
+*/
+INIT_DEFAULT: PROC;
+
+INIT_DEFAULT_READ:
+        CALL INIT_READ;
+        IF VERB = -1 THEN
+           RETURN;
+        ACTION_SPK(VERB) = J;
+        GO TO INIT_DEFAULT_READ;
+
+        END INIT_DEFAULT;
+
+/*
+   READ INFO ABOUT AVAILABLE LIQUIDS AND OTHER CONDITIONS, STORE
+   IN COND.
+
+   SECTION 9: LIQUID ASSETS, ETC. EACH LINE CONTAINS A NUMBER (N)
+       AND UP TO 9 LOCATION NUMBERS. BIT N (WHERE 0 IS THE UNITS
+       BIT) IS SET IN COND(LOC) FOR EACH LOC GIVEN.  THE COND BITS
+       CURRENTLY ASSIGNED ARE:
+
+           0    LIGHT
+           1    IF BIT 2 IS ON: ON FOR OIL, OFF FOR WATER
+           2    LIQUID ASSET, SEE BIT 1
+           3    PIRATE DOESN'T GO HERE UNLESS FOLLOWING PLAYER
+           4    OUTSIDE THE CAVE
+
+       OTHER BITS ARE USED TO INDICATE AREAS OF INTEREST TO "HINT"
+       ROUTINES:
+
+           8    TRYING TO GET INTO THE CAVE
+           9    TRYING TO CATCH THE BIRD
+          10    TRYING TO DEAL WITH THE SNAKE
+          11    LOST IN THE ALL ALIKE MAZE
+          12    PONDERING THE DARK ROOM
+          13    AT WITT'S END
+          14    LOST IN THE SHAPELESS MAZE
+          15    TRYING TO ESCAPE FROM THE NECROMANCER
+          16    TRYING TO CROSS THE RIVER
+          17    TRYING TO GET UNDER THE FLOOR IN THE SHACK
+
+       COND(LOC) IS SET TO 2, OVERRIDING ALL OTHER BITS, IF LOC
+       HAS FORCED MOTION.
+*/
+INIT_LIQUID: PROC;
+
+INIT_LIQUID_READ:
+        CALL INIT_READ;
+        IF K = -1 THEN
+           RETURN;
+        DO I = 1 TO 8;
+           LOC = TK(I);
+           IF LOC = 0 THEN 
+              LEAVE;
+           IF BITSET(LOC,K) THEN
+              CALL BUG(8);
+           COND(LOC) = COND(LOC) + 2**K;
+        END;
+        GO TO INIT_LIQUID_READ;
+
+        END INIT_LIQUID;
+
+/*
+   READ DATA FOR HINTS.
+
+   SECTION 11: HINTS. EACH LINE CONTAINS A HINT NUMBER
+       (CORRESPONDING TO A COND BIT, SEE SECTION 9). THE
+       NUMBER OF TURNS HE MUST BE AT THE RIGHT LOC(S) BEFORE
+       TRIGGERING THE HINT, THE POINTS DEDUCTED FOR TAKING
+       THE HINT, THE MESSAGE NUMBER (SECTION 6) OF THE QUESTION,
+       AND THE MESSAGE NUMBER OF THE HINT. THESE VALUES ARE
+       STASHED IN THE "HINTS" ARRAY. HINTSIZE IS SET TO THE
+       MAX HINT NUMBER (<=HINTMAX). NUMBERS 1-7 ARE UNUSABLE
+       SINCE COND BITS ARE OTHERWISE ASSIGNED, SO 2 IS USED
+       TO REMEMBER IF HE'S READ THE CLUE IN THE REPOSITORY, 
+       AND 3 IS USED TO REMEMBER WHETHER HE ASKED FOR 
+       INSTRUCTIONS (GETS MORE TURNS, BUT LOSES POINTS).
+*/
+INIT_HINTS: PROC;
+
+        HINTSIZE = 0;
+
+INIT_HINTS_READ:
+        CALL INIT_READ;
+        IF K = -1 THEN
+           RETURN;
+        IF K = 0 THEN
+           GO TO INIT_HINTS_READ;
+        IF K < 0 | K > HINTMAX THEN
+           CALL BUT(7);
+
+        DO I = 1 TO 4;
+           HINTS(K,I) = TK(I);
+        END;
+
+        HINTSIZE = MAX(HINTSIZE,K);
+        GO TO INIT_HINTS_READ;
+
+        END INIT_HINTS;
+
+/*
+   READ DATA SUBROUTINE
+
+   THIS SUBROUTINE PERFORMS ALL READING OF THE DATA BASE.
+   LINES WITH AN ASTERISK IN COLUMN ONE ARE TREATED AS COMMENTS.
+   ALL OTHER LINES ARE "GOTTEN" INTO THEIR APPROPRIATE DATA AREAS
+   FOR THE CALLER.
+*/
+INIT_READ: PROC;
+
+INIT_GET:
+        GET FILE(CAVES) EDIT (OUTSTR) COL(1),A(80));
+        IF SUBSTR(OUTSTR,1,1) = "*" THEN GO TO INIT_GET;
+
+        SELECT(SECT);
+           WHEN (-1)
+              GET STRING (OUTSTR) EDIT (SECT) (F(8));
+           WHEN (0)
+              RETURN;
+           WHEN (1,2,5,6,10)
+              GET STRING (OUTSTR) EDIT
+              (LOC,(LINES(J) DO J=LINESIZE+1 TO LINESIZE+9))
+              (F(8),9 A(8));
+           WHEN (3)
+              GET STRING (OUTSTR) EDIT
+              (LOC,NEWLOC,(TK(I) DO I=1 TO 8)) (10 F(8));
+           WHEN (4)
+              GET STRING OUTSTR) EDIT
+              (VERB_NUMB(VERBSIZE),VERB_NAME(VERBSIZE)) (F(8),A(8));
+           WHEN (7)
+              GET STRING (OUTSTR) EDIT
+              (OBJ,J,K) (3 F(8));
+           WHEN (8)
+              GET STRING (OUTSTR) EDIT
+              (VERB,J) (2 F(8));
+           WHEN (9)
+              GET STRING (OUTSTR) EDIT
+              (K,(TK(I) DO I=1 TO 9))(10 F(8));
+           WHEN (11)
+              GET STRING (OUTSTR) EDIT
+              (K,(TK(I) DO I=1 TO 4))(5 F(8));
+           OTHERWISE
+              CALL BUG(11)
+        END;
+        RETURN;
+
+        END INIT_READ;
+
+/*
+   DEFINE SOME HANDY MNEMONICS.
+*/
+INIT_WORDS: PROC;
+
+/*
+   THESE CORRESPOND TO OBJECT NUBMERS.
+*/
+        ALL = VOCAB('ALL',1);
+        AXE = VOCAB('AXE',1);
+        BAR = VOCAB('BAR',1);
+        BALL = VOCAB('BALL',1);
+        BATTERY = VOCAB('BATTERY',1);
+        BEAR = VOCAB('BEAR',1);
+        BIRD = VOCAB('BIRD',1);
+        BOTTLE = VOCAB('BOTTLE',1);
+        CAGE = VOCAB('CAGE',1);
+        CHASM = VOCAB('CHASM',1);
+        CIRCLE = VOCAB('CIRCLE',1);
+        CLAM = VOCAB('CLAM',1);
+        CREVASSE = VOCAB('CREVASSE',1);
+        DOOR = VOCAB('DOOR',1);
+        DRAGON = VOCAB('DRAGON',1);
+        DRAWINGS = VOCAB('DRAWINGS',1);
+        DWARF = VOCAB('DWARF',1);
+        DYNAMITE = VOCAB('DYNAMITE',1);
+        ELVES = VOCAB('ELVES',1);
+        FALLS = VOCAB('FALLS',1);
+        FISSURE = VOCAB('FISSURE',1);
+        FLOOR = VOCAB('FLOOR',1);
+        FOOD = VOCAB('FOOD',1);
+        FROG = VOCAB('FROG',1);
+        GRATE = VOCAB('GRATE',1);
+        HERB = VOCAB('HERB',1);
+        HEXAGON = VOCAB('HEXAGON',1);
+        HOLE = VOCAB('HOLE',1);
+        KAZAK = VOCAB('KAZAK',1);
+        KEYS = VOCAB('KEYS',1);
+        KNIFE = VOCAB('KNIFE',1);
+        LAMP = VOCAB('LAMP',1);
+        MAGAZINE = VOCAB('MAGAZINE',1);
+        MESSAGE = VOCAB('MESSAGE',1);
+        MIRROR = VOCAB('MIRROR',1);
+        MOLE = VOCAB('MOLE',1);
+        MONSTER = VOCAB('MONSTER',1);
+        OIL = VOCAB('OIL',1);
+        OYSTER = VOCAB('OYSTER',1);
+        PARCHMENT = VOCAB('PARCHMENT',1);
+        PENTAGON = VOCAB('PENTAGON',1);
+        PILLOW = VOCAB('PILLOW',1);
+        PLANT = VOCAB('PLANT',1);
+        PLANT2= VOCAB('PLANT2',1);
+        RING = VOCAB('RING',1);
+        RING1 = VOCAB('RING1',1);
+        RING2= VOCAB('RING2',1);
+        RING3= VOCAB('RING3',1);
+        RING4= VOCAB('RING4',1);
+        ROD = VOCAB('ROD',1);
+        ROD2 = VOCAB('ROD2',1);
+        ROPE = VOCAB('ROPE',1);
+        SHOVEL = VOCAB('SHOVEL',1);
+        SNAKE = VOCAB('SNAKE',1);
+        SPICES = VOCAB('SPICES',1);
+        SPROUTS = VOCAB('SPROUTS',1);
+        SQUARE = VOCAB('SQUARE',1);
+        STAFF = VOCAB('STAFF',1);
+        STAR = VOCAB('STAR',1);
+        STEPS = VOCAB('STEPS',1);
+        TABLET = VOCAB('TABLET',1);
+        TROLL = VOCAB('TROLL',1);
+        TROLL2 = VOCAB('TROLL2',1);
+        VEND = VOCAB('VEND',1);
+        WAD = VOCAB('WAD',1);
+        WATER = VOCAB('WATER',1);
+        WIND = VOCAB('WIND',1);
+/*
+   OBJECTS FROM MINTRS TO MAXTRS ARE TREASURES.
+   HERE ARE A FEW.
+*/
+        ANIMAL = VOCAB('ANIMAL',1);
+        CHAIN = VOCAB('CHAIN',1);
+        CHALICE = VOCAB('CHALICE',1);
+        COINS = VOCAB('COINS',1);
+        CONCH = VOCAB('CONCH',1);
+        CHEST = VOCAB('CHEST',1);
+        DOUBLOONS = VOCAB('DOUBLOONS',1);
+        EGGS = VOCAB('EGGS',1);
+        EMERALD = VOCAB('EMERALD',1);
+        ERMINE = VOCAB('ERMINE',1);
+        KRATER = VOCAB('KRATER',1);
+        NUGGET = VOCAB('NUGGET',1);
+        PEARL = VOCAB('PEARL',1);
+        PYRAMID = VOCAB('PYRAMID',1);
+        RUG = VOCAB('RUG',1);
+        SWORD = VOCAB('SWORD',1);
+        TRIDENT = VOCAB('TRIDENT',1);
+        VASE = VOCAB('VASE',1);
+/*
+   THESE ARE MOTION-VERB NUMBERS.
+*/
+        BACK = VOCAB('BACK',0);
+        CAVE = VOCAB('CAVE',0);
+        CRAWL = VOCAB('CRAWL',0);
+        DEPRESSION = VOCAB('DEPRESSION',0);
+        DOWN = VOCAB('DOWN',0);
+        EAST = VOCAB('EAST',0);
+        ENTRANCE = VOCAB('ENTRANCE',0);
+        FORWARD = VOCAB('FORWARD',0);
+        FRIEND = VOCAB('FRIEND',0);
+        INSIDE = VOCAB('INSIDE',0);
+        LEFT = VOCAB('LEFT',0);
+        LOOK = VOCAB('LOOK',0);
+        MAGIC = VOCAB('MAGIC',0);
+        NORTH = VOCAB('NORTH',0);
+        NORTHEAST = VOCAB('NORTHEAST',0);
+        NORTHWEST = VOCAB('NORTHWEST',0);
+        NULLX = VOCAB('NULLX',0);
+        OUTSIDE = VOCAB('OUTSIDE',0);
+        PRUGH = VOCAB('PRUGH',0);
+        RIGHT = VOCAB('RIGHT',0);
+        SOUTH = VOCAB('SOUTH',0);
+        SOUTHEAST = VOCAB('SOUTHEAST',0);
+        SOUTHWEST = VOCAB('SOUTHWEST',0);
+        WEST = VOCAB('WEST',0);
+        UP = VOCAB('UP',0);
+/*
+   AND SOME ACTION VERBS.
+*/
+        ASSEMBLE = VOCAB('ASSEMBLE',2);
+        BLAST = VOCAB('BLAST',2);
+        BREAK = VOCAB('BREAK',2);
+        BRIEF = VOCAB('BRIEF',2);
+        CALM = VOCAB('CALM',2);
+        DIG = VOCAB('DIG',2);
+        DRINK = VOCAB('DRINK',2);
+        DROP = VOCAB('DROP',2);
+        EAT = VOCAB('EAT',2);
+        FEED = VOCAB('FEED',2);
+        FILL = VOCAB('FILL',2);
+        FIND = VOCAB('FIND',2);
+        FOO = VOCAB('FOO',2);
+        GREEK = VOCAB('ALPHA',2);
+        HOURS = VOCAB('HOURS',2);
+        INVENTORY = VOCAB('INVENTOR',2);
+        KILL = VOCAB('KILL',2);
+        KISS = VOCAB('KISS',2);
+        LOCK = VOCAB('LOCK',2);
+        LOGON = VOCAB('LOGON',2);
+        MURDOC = VOCAB('MURDOC',2);
+        NOTHING = VOCAB('NOTHING',2);
+        OFF = VOCAB('OFF',2);
+        ON = VOCAB('ON',2);
+        OPEN = VOCAB('OPEN',2);
+        POUR = VOCAB('POUR',2);
+        QUIT = VOCAB('QUIT',2);
+        READ = VOCAB('READ',2);
+        RUB = VOCAB('RUB',2);
+        SAY = VOCAB('SAY',2);
+        SCORE = VOCAB('SCORE',2);
+        SHORTCUT = VOCAB('SHORTCUT',2);
+        SNAPSHOT = VOCAB('SNAPSHOT',2);
+        SPELL = VOCAB('SPELL',2);
+        SUSPEND = VOCAB('SUSPEND',2);
+        TAKE = VOCAB('TAKE',2);
+        TERMINATE = VOCAB('TERMINATE',2);
+        THROW = VOCAB('THROW',2);
+        WAKE = VOCAB('WAKE',2);
+        WALK= VOCAB('WALK',2);
+        WAVE = VOCAB('WAVE',2);
+        WINDY = VOCAB('NAKRL',2);
+/*
+   AND SOME MAGIC WORDS.
+*/
+        MAGIC_WORDS(1) = VOCAB('MAGIC',-1);
+        MAGIC_WORDS(2) = VOCAB('PRUGH',-1);
+        MAGIC_WORDS(3) = VOCAB('PLOVER',-1);
+        MAGIC_WORDS(4) = VOCAB('FEE',-1);
+        MAGIC_WORDS(5) = VOCAB('MURDOC',-1);
+        MAGIC_WORDS(6) = VOCAB('NAKRL',-1);
+        MAGIC_WORDS(7) = VOCAB('ALPHA',-1);
+        MAGIC_WORDS(8) = VOCAB('BELEG',-1);
+        MAGIC_WORDS(9) = VOCAB('FRIEND',-1);
+/*
+   SOME IMPORTANT NAMES
+*/
+        AKIBA = VOCAB('AKIBA',4);
+        ALPHA = VOCAB('ALPHA',3);
+        BELEG = VOCAB('BELEG',3);
+        FEE   = VOCAB('FEE',3);
+        GLORN = VOCAB('GLORN',4);
+        NAKRL = VOCAB('NAKRL',3);
+
+        RETURN;
+        END INIT_WORDS;
+
+/*
+   INITIALIZE THE DWARVES. DLOC IS LOC OF DWARVES, HARD-WIRED
+   IN. ODLOC IS PRIOR LOC OF EACH DWARF, INITIALLY GARBAGE.
+   DALTLC IS ALTERNATE INITIAL LOC FOR DWARF, IN CASE ONE OF
+   THEM STARTS OUT ON TOP OF THE ADVENTURER. (NO 2 OF THE 5
+   INITIAL LOCS ARE ADJACENT.) DSEEN IS TRUE IF DWARF HAS SEEN
+   HIM. DFLAG CONTROLS THE LEVEL OF ACTIVATION OF ALL THIS:
+        0     NO DWARF STUFF YET (WAIT UNTIL REACHES HALL OF
+              MISTS)
+        1     REACHED HALL OF MISTS, BUT HASN'T MET FIRST DWARF
+        2     MET FIRST DWARF, OTHERS START MOVING NO KNIVES
+              THROWN YET
+        3     A KNIFE HAS BEEN THROWN (FIRST SET ALWAYS MISSES)
+        3+    DWARVES ARE MAD (INCREASES THEIR ACCURACY)
+
+   SIXTH DWARF IS THE PIRATE. HE ALWAYS STARTS AT HIS CHEST'S
+   EVENTUAL LOCATION INSIDE THE MAZE. THIS LOC IS SAVED IN 
+   CHEST_LOC FOR REF. THE DEAD END IN THE OTHER MAZE HAS ITS
+   LOC STORED IN CHEST_LOC2.
+
+   SEVENTH DWARF IS THE NOSTRIL MONSTER. HE BECOMES ALIVE AFTER
+   THE FIRST DRAGON IS DEAD.
+
+   EIGHTH DWARF IS THE FIRE BREATHING DRAGON. HE BECOMES ALIVE
+   AFTER THE FIRST DRAGON IS DEAD.
+
+   NINTH DWARF IS FRIAR TRUCK, HE INCREASES HOLD_MAX.
+
+   TENTH DWARF IS THE FRIGHTENED MOLE. LEADS ADVENTURER TO A
+   NEW EXCITING PLACE.
+
+   ELEVENTH DWARF IS THE NECROMANCER. HE THWARTS THE ADVENTURER
+   ON HIS QUEST. HE BECOMES ALIVE AFTER THE ADVENTURER ENTERS
+   THE WIZARD'S CHAMBER.
+ 
+*/
+INIT_DWARVES: PROC;
+
+     CHEST_LOC = DEAD_END_10;
+     CHEST_LOC2 = DEAD_END_11;
+
+     DLOC(1) = HALL_MT_KING;
+     DLOC(2) = WEST_SIDE_FISSURE;
+     DLOC(3) = Y_2;
+     DLOC(4) = ALL_ALIKE_MAZE_3;
+     DLOC(5) = COMPLEX_JUNCTION;
+     DLOC(PIRATE_NUM) = CHEST_LOC;
+     DLOC(NOSTRIL_NUM) = 0;
+     DLOC(DRAGON_NUM) = 0;
+     DLOC(TRUCK_NUM) = ALL_DIFFERENT_MAZE_10;
+     DLOC(MURDOC_NUM) = UNUSED_ROOM;
+     DLOC(NECRO_NUM) = 0;
+     DLOC(12) = 0;
+     DLOC(13) = 0;      
+     DLOC(14) = 0;
+     DLOC(15) = 0;
+     DLOC(16) = 0;
+     DLOC(17) = 0;
+     DLOC(18) = 0;
+     DLOC(19) = 0;
+     DLOC(20) = 0;
+
+     DALTLC = LOW_ROOM;
+
+     RETURN;
+     END INIT_DWARVES;
+
+/*
+   REPORT ON AMOUNT OF ARRAYS ACTUALLY USED, TO PERMIT
+   REDUCTIONS.
+*/
+INIT_REPORT: PROC;
+
+        DO KK = LOC_MAX TO 1 BY -1;
+           IF LTEXT(KK) != 0 THEN
+              LEAVE;
+        END;
+
+        DO OBJ = OBJ_MAX TO 1 BY -1;
+           IF PTEXT(OBJ) != 0 THEN
+              LEAVE;
+        END;
+
+        DO K = 1 TO VERBSIZE;
+           IF VERB_NUMB(K)/1000 = 2 THEN
+              VERB = VERB_NUMB(K) - 2000;
+        END;
+
+        DO J = RTEXTMAX TO 1 BY -1;
+           IF RTEXT(J) != 0 THEN
+              LEAVE;
+        END;
+
+        IF !AUDIT_GAME THEN
+           RETURN;
+
+        CALL LINESKP;
+        PUT STRING (OUTSTR) EDIT (LINESIZE,' of ',LINEMAX,
+            ' words of Messages') (F(6),A,F(6),A);
+        CALL LINEOUT;
+        PUT STRING (OUTSTR) EDIT (TRAVSIZE,' of ',TRAVMAX,
+            ' Travel Options') (F(6),A,F(6),A);
+        CALL LINEOUT;
+        PUT STRING (OUTSTR) EDIT (VERBSIZE,' of ',VERBMAX,
+            ' Vocabulary Words') (F(6),A,F(6),A);
+        CALL LINEOUT;
+        PUT STRING (OUTSTR) EDIT (KK,' of ',LOC_MAX,
+            ' Locations') (F(6),A,F(6),A);
+        CALL LINEOUT;
+        PUT STRING (OUTSTR) EDIT (OBJ,' of ',OBJ_MAX,
+            ' Objects') (F(6),A,F(6),A);
+        CALL LINEOUT;
+        PUT STRING (OUTSTR) EDIT (VERB,' of ',ACTION_MAX,
+            ' Action Verbs') (F(6),A,F(6),A);
+        CALL LINEOUT;
+        PUT STRING (OUTSTR) EDIT (J,' of ',RTEXTMAX,
+            ' Rtext Messages') (F(6),A,F(6),A);
+        CALL LINEOUT;
+        PUT STRING (OUTSTR) EDIT (CLASSIZE,' of ',CLASSMAX,
+            ' Class Messages') (F(6),A,F(6),A);
+        CALL LINEOUT;
+        PUT STRING (OUTSTR) EDIT (HINTSIZE,' of ',HINTMAX,
+            ' Hints') (F(6),A,F(6),A);
+        CALL LINEOUT;
+        CALL LINESKP;
+
+        RETURN;
+        END INIT_REPORT;
+
+/*
+   RESUME SUSPENDED GAME
+
+   THIS SUBROUTINE READS IN AND VERIFIES A PREVIOUSLY SUSPENDED
+   GAME. IF THE SAVED GAME DOES NOT VERIFY, THE PLAYER IS GIVEN
+   THE OPTION OF CONTINUING WITH A NEW GAME.
+
+   THE CONDITIONS SPECIFIED IN THE JCL OTHER THAN RESUME (AUDIT,
+   LOG, AND BLANK) WILL BE RESET TO WHATEVER THEY WERE WHEN THE
+   GAME WAS SUSPENDED. THE PLAYER HAD BEST HAVE TAKEN THIS INTO
+   ACCOUNT (SUCH AS ALLOCATING THE PROPER AUDIT FILE).
+*/
+INIT_RESUME: PROC;
+
+        IF !YES(329,SPK_OK,SPK_OK) THEN
+           DO;
+              RESUME_GAME = FALSE;
+              RETURN;
+           END;
+
+        OPEN FILE (RESUME) TITLE('SUSPEND');
+
+        IF SUSPEND_MISSING THEN
+           DO;
+              CALL RSPEAK(330);
+              CALL LINESKP;
+              RESUME_GAME = FALSE;
+              RETURN;
+           END;
+
+        READ FILE (RESUME) INTO (VERIFICATION_RECORD);
+
+/*
+   MATCH EVERY FIELD IN THE VERIFICATION RECORD WITH THIS GAME'S
+   DATA BASE.
+*/
+        IF VER_VERSION     != VERSION    THEN GO TO INIT_RESUME_BAD;
+        IF VER_TRAVMAX     != TRAVMAX    THEN GO TO INIT_RESUME_BAD;
+        IF VER_TRAVSIZE    != TRAVSIZE   THEN GO TO INIT_RESUME_BAD;
+        IF VER_LOC_MAX     != LOC_MAX    THEN GO TO INIT_RESUME_BAD;
+        IF VER_RTEXTMAX    != RTEXTMAX   THEN GO TO INIT_RESUME_BAD;
+        IF VER_OBJ_MAX     != OBJ_MAX    THEN GO TO INIT_RESUME_BAD;
+        IF VER_VERBMAX     != VERBMAX    THEN GO TO INIT_RESUME_BAD;
+        IF VER_VERBSIZE    != VERBSIZE   THEN GO TO INIT_RESUME_BAD;
+        IF VER_ACTION_MAX  != ACTION_MAX THEN GO TO INIT_RESUME_BAD;
+        IF VER_CLASSMAX    != CLASSMAX   THEN GO TO INIT_RESUME_BAD;
+        IF VER_CLASSIZE    != CLASSIZE   THEN GO TO INIT_RESUME_BAD;
+        IF VER_HINTMIN     != HINTMIN    THEN GO TO INIT_RESUME_BAD;
+        IF VER_HINTMAX     != HINTMAX    THEN GO TO INIT_RESUME_BAD;
+        IF VER_HINTSIZE    != HINTSIZE   THEN GO TO INIT_RESUME_BAD;
+        IF VER_LINEMAX     != LINEMAX    THEN GO TO INIT_RESUME_BAD;
+        IF VER_LINESIZE    != LINESIZE   THEN GO TO INIT_RESUME_BAD;
+
+/*
+   THE SUSPEND FILE VERIFICATION RECORD MATCHES THIS LEVEL OF THE
+   GAME. READ IN THE REST OF THE SAVED GAME.
+*/
+
+        READ FILE (RESUME) INTO (ATLOC);
+        READ FILE (RESUME) INTO (ABB);
+        READ FILE (RESUME) INTO (PROP);
+        READ FILE (RESUME) INTO (LINK);
+        READ FILE (RESUME) INTO (PLACE);
+        READ FILE (RESUME) INTO (FIXED);
+        READ FILE (RESUME) INTO (MISC_WORDS);
+        READ FILE (RESUME) INTO (DWARF_STUFF);
+        READ FILE (RESUME) INTO (BIT_STRINGS);
+
+        CLOSE FILE (RESUME);
+
+        RESUME_GAME = TRUE;  /* READING BIT_STRING RESET THIS! */
+        CALL RSPEAK(326);
+        CALL LINESKP;
+        RETURN;
+
+/*
+   THE SUSPEND FILE DOES NOT MATCH THE GAME JUST INITIALIZED.
+   LET THE PLAYER DECIDE IF HE WANTS TO CONTINUE WITH A NEW GAME.
+*/
+INIT_RESUME_BAD:
+        CLOSE FILE (RESUME);
+        RESUME_GAME = FALSE;
+        IF YES(325,SPK_OK,SPK_OK) THEN
+           RETURN;
+        GAME_OVER = TRUE;
+        GAVE_UP = TRUE;
+        RETURN;
+
+        END INIT_RESUME;
+
+/*
+   ERROR ROUTINE
+
+   IF ANY EXECUTION ERROR OCCURS, EVERYTHING WILL BE DUMPED TO
+   THE LOG FILE (SYSPRINT), BUT ONLY IF AUDIT WAS REQUESTED.
+   IT IS ALSO USED FOR SNAPSHOTS OF THE DATABASE DURING EXECUTION
+   FOR DEBUGGING PURPOSES.
+*/
+DEBUG: PROC;
+
+        IF RECURSIVE THEN
+           STOP;
+        RECURSIVE = TRUE;
+
+        IF !AUDIT_GAME THEN
+           RETURN;
+
+        PUT SKIP EDIT('ATLOC') (A);
+        PUT EDIT((ATLOC(I) DO I=1 TO LOC_MAX))(SKIP,10 F(12));
+
+        PUT SKIP EDIT('LINK') (A);
+        PUT EDIT((LINK(I) DO I=1 TO 2*OBJ_MAX))(SKIP,10 F(12));
+
+        PUT SKIP EDIT('PLACE') (A);
+        PUT EDIT((PLACE(I) DO I=1 TO OBJ_MAX))(SKIP,10 F(12));
+
+        PUT SKIP EDIT('FIXED') (A);
+        PUT EDIT((FIXED(I) DO I=1 TO OBJ_MAX))(SKIP,10 F(12));
+
+        PUT SKIP EDIT('TRAVEL') (A);
+        PUT EDIT((TRAVEL(I) DO I=1 TO TRAVSIZE))(SKIP,10 F(12));
+
+        PUT SKIP EDIT('VERB_NUMB') (A);
+        PUT EDIT((VERB_NUMB(I) DO I=1 TO VERBSIZE))(SKIP,10 F(12));
+
+        PUT SKIP EDIT('VERB_NAME') (A);
+        PUT EDIT((VERB_NAME(I) DO I=1 TO VERBSIZE))(SKIP,10 A(10));
+
+        PUT SKIP EDIT('KEY') (A);
+        PUT EDIT((KEY(I) DO I=1 TO LOC_MAX))(SKIP,10 F(12));
+
+        PUT SKIP EDIT('COND') (A);
+        PUT EDIT((COND(I) DO I=1 TO LOC_MAX))(SKIP,10 F(12));
+
+        PUT SKIP DATA (BIT_STRINGS);
+
+        PUT SKIP DATA (OBJECT_WORDS);
+
+        PUT SKIP DATA (VERB_WORDS);
+
+        PUT SKIP DATA (NAME_WORDS);
+
+        PUT SKIP DATA (MISC_WORDS);
+
+        PUT SKIP DATA (DWARF_STUFF);
+
+        PUT SKIP DATA (SUBROUTINE_STUFF);
+
+        PUT SKIP DATA (CHAR_STRINGS);
+
+        PUT SKIP EDIT('LTEXT') (A);
+        PUT EDIT((LTEXT(I) DO I=1 TO LOC_MAX))(SKIP,10 F(12));
+
+        PUT SKIP EDIT('STEXT') (A);
+        PUT EDIT((STEXT(I) DO I=1 TO LOC_MAX))(SKIP,10 F(12));
+
+        PUT SKIP EDIT(' ABB ') (A);
+        PUT SKIP EDIT((ABB(I) DO I=1 TO LOC_MAX))(SKIP,10 F(12));
+
+        PUT SKIP EDIT('PTEXT') (A);
+        PUT EDIT((PTEXT(I) DO I=1 TO OBJ_MAX))(SKIP,10 F(12));
+
+        PUT SKIP EDIT('RTEXT') (A);
+        PUT EDIT((RTEXT(I) DO I=1 TO RTEXTMAX))(SKIP,10 F(12));
+
+        PUT SKIP EDIT('CTEXT') (A);
+        PUT EDIT((CTEXT(I) DO I=1 TO CLASSMAX))(SKIP,10 F(12));
+
+        PUT SKIP EDIT('LINES OF TEXT (LINES)') (A);
+        PUT EDIT((LINES(I) DO I = 1 TO LINESIZE))(SKIP, 10 A(8));
+
+        RETURN;
+        END DEBUG;
+
+/*
+   THE FOLLOWING CONDITIONS ARE CURRENTLY CONSIDERED FATAL BUGS.
+   NUMBERS < 20 ARE DETECTED WHILE READING THE DATABASE. THE OTHERS
+   OCCUR AT RUNTIME.
+
+        1     NULL LINE IN MESSAGE
+        2     TOO MANY WORDS OF MESSAGES
+        3     TOO MANY TRAVEL OPTIONS
+        4     TOO MANY VOCABULARY WORDS
+        5     REQUIRED VOCABULARY WORD NOT FOUND
+        6     TOO MANY RTEXT OR PTEXT MESSAGES
+        7     TOO MANY HINTS
+        8     LOCATION HAS COND BIT BEING SET TWICE
+        9     INVALID SECTION NUMBER IN DATABASE
+       10     END OF FILE ON DATABASE INPUT
+       11     INVALID SECTION NUMBER IN SECT
+       12     TOO MANY CLASS DEFINITIONS
+       20     SPECIAL TRAVEL (1500>L>1000) EXCEEDS SELECT LIST
+       21     RAN OFF END OF VOCABULARY TABLE
+       22     VOCABULARY TYPE (N/1000) NOT BETWEEN 0 AND 4
+       23     ACTION VERB EXCEEDS GO TO LIST
+       24     INVALID RETURN FROM WORD ANALYSIS ROUTINE
+       25     CONDITIONAL TRAVEL ENTRY WITH NO ALTERNATIVE
+       26     LOCATION HAS NO TRAVEL ENTRIES
+       27     HINT NUMBER EXCEEDS GO TO LIST
+       28     INVALID MONTH RETURNED BY DATE FUNCTION
+       29     TRIED TO CARRY SOMETHING THAT IS NOT AT A LOCATION
+       30     INVALID RANDOM TRAVELER NUMBER
+       31     INVALID RETURN FROM ACTION VERB ROUTINE
+       32     INVALID WIZARD'S SPELL
+       69     PROGRAM TERMINATION REQUESTED
+*/
+
+BUG:    PROC (BUGNUM);
+        DCL BUGNUM FIXED BIN(31);
+        
+        PUT STRING (OUTSTR) EDIT ('Fatal Error # ',BUGNUM) (A,F(2));
+        CALL LINEOUT;
+        CALL DEBUG;
+        CALL CIAO;
+        STOP;
+
+        END BUG;
+
+        END ADVENT;
